@@ -55,6 +55,8 @@ existing `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` credentials without 
 
 A deployed preview uses Cloudflare Access instead of password signup. Supply an Access application
 JWT. The client sends it on the WebSocket handshake and then calls `authenticateFromCfAccess()`.
+For a new Access account, `AgentSession` selects the requested model and completes onboarding before
+opening the workspace.
 
 ```ts
 using session = await AgentSession.create(new URL(previewUrl), {
