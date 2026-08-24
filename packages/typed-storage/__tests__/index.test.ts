@@ -1,5 +1,6 @@
 import { expect, it, describe } from "vitest"
-import { createTypedStorage, collection, UniqueIndex, NonUniqueIndex } from "../src/index.js";
+import { createTypedStorage, collection, UniqueIndex, NonUniqueIndex, REBUILD_PAGE_SIZE }
+    from "../src/index.js";
 import { DurableObjectListOptions, DurableObjectStorage } from "@cloudflare/workers-types/experimental";
 
 // We mock out DurableObjectStorage becaues otherwise we'd have to run the tests inside a
@@ -642,6 +643,22 @@ describe("non-unique index rebuild", () => {
     // Writes after the rebuild keep the index consistent, including key removal.
     storage.users.put({...ALICE, level: 0});
     expect([...storage.users.byLevel.list()]).toStrictEqual([BOB, CAROL]);
+  });
+
+  it("backfills a collection larger than one scan page", () => {
+    let mockStorage = makeMockStorage();
+    let legacy = createTypedStorage(mockStorage, PLAIN_SCHEMA);
+    let count = REBUILD_PAGE_SIZE * 2 + 1;
+    for (let i = 0; i < count; i++) {
+      // Odd i indexed (level 1), even i not (level 0 maps to null).
+      legacy.users.put({...ALICE, name: `u${String(i).padStart(5, "0")}`, level: i % 2});
+    }
+
+    let storage = createTypedStorage(mockStorage, INDEXED_SCHEMA);
+    storage.users.byLevel.rebuild();
+
+    expect([...storage.users.byLevel.get(1)].length).toStrictEqual(Math.floor(count / 2));
+    expect([...storage.users.byLevel.get(0)].length).toStrictEqual(0);
   });
 
   it("discards stale entries for records changed behind the index's back", () => {

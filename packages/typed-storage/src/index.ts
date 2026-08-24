@@ -81,6 +81,9 @@ export interface NonUniqueIndex<T, Key> {
 type Key = string | number;
 type StorageValue = NonNullable<unknown>;
 
+/** How many records rebuild() buffers per scan page (exported for the rebuild tests). */
+export const REBUILD_PAGE_SIZE = 1024;
+
 type IndexFunction<T> =
     | ((record: T) => string | null)
     | ((record: T) => string[])
@@ -610,8 +613,16 @@ function createCollection<
           }
           idxKv.delete(idxKey);
         }
-        for (let record of Array.from(collection.list())) {
-          addToIndex(record);
+        // The record scan is buffered one page at a time: a rebuild is O(collection) CPU by
+        // nature, but must not materialize an arbitrarily large collection in memory.
+        let cursor: Key | undefined;
+        for (;;) {
+          let page = Array.from(collection.list({startAfter: cursor, limit: REBUILD_PAGE_SIZE}));
+          for (let record of page) {
+            addToIndex(record);
+          }
+          if (page.length < REBUILD_PAGE_SIZE) break;
+          cursor = pkForT(page.at(-1)!);
         }
       },
     };

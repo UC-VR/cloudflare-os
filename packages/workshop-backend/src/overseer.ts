@@ -9832,23 +9832,21 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     // listActions({filter: "pending"}) after initiating the subscribe (see api.ts).
     if (startAfter !== undefined) {
       // DEPRECATED: pre-deploy clients pass startAfter and build their entire history view from
-      // replay; honor that by replaying every record, paging with a yield between pages so a huge
-      // log doesn't starve other RPCs. The value itself is ignored (see api.ts). nextActionId
-      // bounds the sweep: records created past it are delivered by the live subscription
-      // registered above. Delete this block (and PENDING_SCAN_PAGE_SIZE) once pre-deploy clients
-      // have cycled out.
+      // replay; honor that by replaying every record, awaiting each page's delivery so a huge log
+      // neither starves other RPCs nor queues unbounded callbacks -- and so any delivery failure,
+      // the final page's included, rejects the subscribe call before ready(). The value itself is
+      // ignored (see api.ts). nextActionId bounds the sweep: records created past it are
+      // delivered by the live subscription registered above. Delete this block (and
+      // PENDING_SCAN_PAGE_SIZE) once pre-deploy clients have cycled out.
       try {
         let end = this.impl.storage.nextActionId.get();
         let cursor: number | undefined;
         for (;;) {
           if (disposed) throw new Error("Action subscriber failed during replay");
           let page = [...actions.list({startAfter: cursor, end, limit: PENDING_SCAN_PAGE_SIZE})];
-          for (let record of page) {
-            subscriber.entry(actionRecordToLog(record)).catch(unsubscribe);
-          }
+          await Promise.all(page.map(record => subscriber.entry(actionRecordToLog(record))));
           if (page.length < PENDING_SCAN_PAGE_SIZE) break;
           cursor = page.at(-1)!.id;
-          await scheduler.wait(0);
         }
       } catch (err) {
         unsubscribe();

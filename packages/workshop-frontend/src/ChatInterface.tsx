@@ -5745,21 +5745,35 @@ function ChatInterface({
   // never reaches us through it.
   useEffect(() => {
     let cancelled = false;
-    for (const locations of cacheRef.current.actionMessages.values()) {
+    const targets = [...cacheRef.current.actionMessages.values()].flatMap((locations) => {
       const location = locations.values().next().value;
-      if (!location) continue;
-      const msg = getCachedActionMessage(location)?.msg;
-      if (!msg) continue;
-      if (msg.actionLog && msg.actionLog.state !== "pending") continue;
+      const msg = location && getCachedActionMessage(location)?.msg;
+      return msg && (!msg.actionLog || msg.actionLog.state === "pending") ? [location] : [];
+    });
 
-      overseer.getChatMessage(location.chatId, location.sequence).then((fetched) => {
+    const refresh = async (location: { chatId: number; sequence: number }) => {
+      try {
+        const fetched = await overseer.getChatMessage(location.chatId, location.sequence);
         if (cancelled || fetched?.type !== "action" || !fetched.actionLog) return;
         // Resolution is monotonic: never regress a card another channel already resolved.
         const current = getCachedActionMessage(location)?.msg;
         if (fetched.actionLog.state === "pending" &&
             current?.actionLog && current.actionLog.state !== "pending") return;
         if (applyActionLogUpdateToCachedMessages(fetched.actionLog)) scheduleUpdate();
-      }, (err) => console.error("Failed to refresh action card:", err));
+      } catch (err) {
+        console.error("Failed to refresh action card:", err);
+      }
+    };
+
+    // A few at a time: a large cache refreshing all at once would flood the workspace DO.
+    let next = 0;
+    for (let i = Math.min(4, targets.length); i > 0; i--) {
+      void (async () => {
+        while (next < targets.length) {
+          if (cancelled) return;
+          await refresh(targets[next++]);
+        }
+      })();
     }
     return () => { cancelled = true; };
   }, [overseer]);

@@ -68,14 +68,20 @@ describe("subscribeToActions", () => {
 
   it("rejects the deprecated full replay when the subscriber fails mid-sweep", async () => {
     let storage = makeActionStorage();
-    // More than one page, so the sweep crosses a yield after the entry rejections settle.
+    // More than one page, so the failure must also stop the sweep from advancing.
     for (let id = 0; id <= PENDING_SCAN_PAGE_SIZE; id++) putAction(storage, id);
     let client = await openFakeOverseer(storage);
-    let { subscriber, events } = makeSubscriber(async () => { throw new Error("entry failed"); });
+    let entries = 0;
+    let { subscriber, events } = makeSubscriber(async () => {
+      ++entries;
+      throw new Error("entry failed");
+    });
 
+    // Each page's delivery is awaited, so the rejection surfaces directly, before ready().
     await expect(client.subscribeToActions(subscriber, new Date(0)))
-        .rejects.toThrow("Action subscriber failed during replay");
+        .rejects.toThrow("entry failed");
     expect(events).not.toContain("ready");
+    expect(entries).toBeLessThanOrEqual(PENDING_SCAN_PAGE_SIZE);
   });
 
   it("stops delivering after the subscription is disposed", async () => {

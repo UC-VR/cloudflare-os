@@ -121,12 +121,14 @@ function openSubscription(overseer: RpcStub<Overseer>, store: Store) {
     ready(): void {}
   }
 
+  let failed = false
   const fail = (error: unknown) => {
     if (store.generation !== generation) return
     console.error('Failed to load pending actions:', error)
     // Deliberately also downgrades an already-'ready' store: the pages can drain before the
     // subscribe call's return trip fails, and a store with a dead live stream must not present
     // as settled.
+    failed = true
     commit(store, 'error')
   }
 
@@ -158,8 +160,10 @@ function openSubscription(overseer: RpcStub<Overseer>, store: Store) {
       beforeId = page.nextBeforeId
       scheduleNotify(store)
     } while (beforeId !== undefined)
-    // Synchronous commit (not scheduleNotify) so a throttled background tab still settles.
-    commit(store, 'ready')
+    // Synchronous commit (not scheduleNotify) so a throttled background tab still settles. A
+    // subscribe failure is sticky: pages draining afterwards must not upgrade a store whose live
+    // stream is dead back to 'ready'.
+    commit(store, failed ? 'error' : 'ready')
   })().catch(fail)
 }
 

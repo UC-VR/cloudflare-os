@@ -148,6 +148,19 @@ describe('useActions', () => {
     expect(latest.status).toBe('error')
   })
 
+  it('stays error when the pages drain after the subscribe call already failed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const server = makeOverseer()
+    await view.render(<Probe overseer={server.overseer} />)
+
+    await server.rejectSubscription(new Error('DO overloaded'))
+    await server.resolvePendingQuery({ entries: [entry(1)] })
+
+    // The successful pages fold, but a dead live stream must not present as settled.
+    expect(latest.status).toBe('error')
+    expect(latest.pending.map(e => e.id)).toEqual([1])
+  })
+
   it('reports error but keeps gathered pendings when a later page fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const server = makeOverseer()

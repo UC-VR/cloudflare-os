@@ -84,6 +84,10 @@ export function useActionHistory(
 
   useActionEntries(overseer, record => {
     const session = sessionRef.current
+    // Dropping records here can't lose an update: listActions snapshots and responds in one DO
+    // turn, so on the ordered RPC session an entry reflecting a post-snapshot change always
+    // arrives after the page it would race with. Anything dropped pre-first-page or below the
+    // frontier is state a loaded page already supersedes, or is read fresh when its page loads.
     if (!session.hasLoadedPage) return
     if (!matchesActionHistoryFilter(record, filter)) return
     if (session.frontier !== undefined && record.id < session.frontier) return
