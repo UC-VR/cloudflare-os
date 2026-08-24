@@ -19,7 +19,7 @@ function connectTyped(gadget: RpcStub<GadgetClient>, chatId?: number) {
 
 /** Options for creating an isolated production Workshop agent session. */
 export type AgentSessionOptions = {
-  /** Model to use. It must appear in the new workspace's `listModels()` result. Defaults to the first. */
+  /** Model to use. It must appear in the account's `listModels()` result. Defaults to the first. */
   modelId?: string;
   /** Access application JWT. When present, authenticate as its Access identity instead of signing up. */
   accessToken?: string;
@@ -140,7 +140,7 @@ export class AgentSession implements Disposable {
     this.#settleDebounceMs = DEFAULT_SETTLE_DEBOUNCE_MS;
   }
 
-  /** Create a fresh account and workspace, then establish subscriptions before any chat starts. */
+  /** Create a fresh account, finish first-time model setup, and open an isolated workspace. */
   static async create(baseUrl: URL, options: AgentSessionOptions = {}): Promise<AgentSession> {
     const publicApi = connect(baseUrl, { accessToken: options.accessToken });
     let authenticatedApi: RpcStub<AuthenticatedApi> | undefined;
@@ -157,12 +157,13 @@ export class AgentSession implements Disposable {
       if (options.userModel !== undefined) {
         await authenticatedApi.addModel(options.userModel.profile, options.userModel.config);
       }
+      const modelId = AgentSession.#selectModel(await authenticatedApi.listModels(), options.modelId);
+      if (!await authenticatedApi.isOnboardingCompleted()) {
+        await authenticatedApi.setPreferredModel(modelId);
+        await authenticatedApi.completeOnboarding();
+      }
       overseer = await authenticatedApi.newGadget();
-      const [metadata, models] = await Promise.all([
-        overseer.getMetadata(),
-        overseer.listModels(),
-      ]);
-      const modelId = AgentSession.#selectModel(models, options.modelId);
+      const metadata = await overseer.getMetadata();
       session = new AgentSession(
           publicApi, authenticatedApi, overseer, metadata.id, modelId,
           options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
