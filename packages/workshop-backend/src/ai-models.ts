@@ -356,6 +356,16 @@ function makeHandle(args: HandleArgs): ModelHandle {
 export function getModel(env: Cloudflare.Env, config: AiModelConfig,
                          initiator: AiChatAuthorInfo,
                          options: ModelRoutingOptions = {}): ModelHandle {
+  // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+  // Checked before every other routing mode (including BYOK) because an explicit `routing:
+  // "direct"` opt-in on the model config means the operator deliberately wants this model to
+  // bypass AI Gateway entirely (e.g. to reach an endpoint behind an authenticating proxy that
+  // AI Gateway mode would otherwise make unreachable) -- omitting the flag preserves every
+  // existing routing decision exactly.
+  if (config.routing === "direct") {
+    return getModelDirect(config, options.sessionAffinity);
+  }
+
   // BYOK: a connected user's own Cloudflare account pays for everything (all providers, including
   // Workers AI), routed through the user's own AI Gateway with unified billing. Honored regardless
   // of whether a platform AI Gateway is configured, so connected users are always billed correctly.

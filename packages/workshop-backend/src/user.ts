@@ -548,8 +548,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   }
 
   async addModel(profile: AiChatAuthorInfo, config: AiModelConfig): Promise<void> {
+    // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+    // Gateway provider availability is irrelevant to a model that bypasses the gateway entirely,
+    // so only enforce this guard for models that actually route through it.
     let gwConfig = getAiGatewayConfig(this.env);
-    if (gwConfig && !gwConfig.providers.has(config.provider)) {
+    if (gwConfig && config.routing !== "direct" && !gwConfig.providers.has(config.provider)) {
       throw new Error(`Provider "${config.provider}" is not available in AI Gateway mode.`);
     }
 

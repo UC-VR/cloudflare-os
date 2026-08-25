@@ -580,6 +580,86 @@ describe("getModel direct routing (no gateway)", () => {
   });
 });
 
+// LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+//
+// Unlike every describe block above/below, these tests use env()'s DEFAULT -- i.e. AI Gateway
+// mode IS ACTIVE (CF_AI_GATEWAY is set) -- because that is exactly the mode the previous patch's
+// tests never exercised (they all passed `CF_AI_GATEWAY: undefined`), which is why the apiUrl/
+// headers patches were inert on the actual deployment (AI Gateway mode there) despite passing
+// every existing test.
+describe("getModel routing: explicit direct bypass in AI Gateway mode (LOCAL PATCH)", () => {
+  beforeEach(() => {
+    capturedRequests.length = 0;
+  });
+
+  it("routes to the custom apiUrl instead of the gateway when routing is direct", async () => {
+    const handle = getModel(env(), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      apiUrl: "https://access-proxy.example.com/anthropic",
+      routing: "direct",
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe("https://access-proxy.example.com/anthropic");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://access-proxy.example.com/anthropic/v1/messages");
+  }, 15000);
+
+  it("sends config.headers on the outbound request when routing is direct", async () => {
+    const handle = getModel(env(), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      routing: "direct",
+      headers: {
+        "CF-Access-Client-Id": "client-id-value",
+        "CF-Access-Client-Secret": "client-secret-value",
+      },
+    }, INITIATOR);
+
+    const request = await captureRequest(handle);
+    expect(request.headers.get("cf-access-client-id")).toBe("client-id-value");
+    expect(request.headers.get("cf-access-client-secret")).toBe("client-secret-value");
+  }, 15000);
+
+  // The most important test in this block: the regression guard proving we did NOT change any
+  // existing model's behavior. Same config as the first test above, minus `routing` -- must
+  // still resolve to the gateway URL and silently ignore apiUrl, exactly as before this patch.
+  it("still routes via the gateway and ignores apiUrl when routing is not set (regression guard)", async () => {
+    const handle = getModel(env(), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      apiUrl: "https://access-proxy.example.com/anthropic",
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe(
+        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/platform-gateway/anthropic");
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe(
+        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/platform-gateway/anthropic/" +
+        "v1/messages");
+  }, 15000);
+
+  it("reaches getModelDirect's anthropic branch even when the gateway's providers exclude anthropic", async () => {
+    // Mirrors the live deployment: CF_AI_GATEWAY_PROVIDERS is "cloudflare" only, so anthropic
+    // could never be routed through the gateway -- direct routing must still work regardless.
+    const handle = getModel(env({ CF_AI_GATEWAY_PROVIDERS: "cloudflare" }), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      routing: "direct",
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe("https://api.anthropic.com");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://api.anthropic.com/v1/messages");
+    expect(request.headers.get("x-api-key")).toBe("direct-api-token");
+  }, 15000);
+});
+
 describe("PDF attachment bridging", () => {
   beforeEach(() => {
     capturedRequests.length = 0;

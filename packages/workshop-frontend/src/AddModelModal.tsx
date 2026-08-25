@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Dialog, Button, Input, Select, SensitiveInput, Collapsible, useKumoToastManager } from '@cloudflare/kumo'
+import { Dialog, Button, Input, Select, SensitiveInput, Collapsible, Switch, useKumoToastManager } from '@cloudflare/kumo'
 import { AiChatAuthorInfo, AiModelConfig, AiModelProvider, AiGatewayInfo, SUGGESTED_MODELS } from '@gadgets/workshop-shared/api'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
@@ -104,6 +104,8 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const [apiUrl, setApiUrl] = useState('')
   // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
   const [headerRows, setHeaderRows] = useState<{ name: string, value: string }[]>([])
+  // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+  const [directRouting, setDirectRouting] = useState(false)
 
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -112,7 +114,11 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const gatewayMode = aiConfig?.enabled === true
-  const enabledProviders: Set<string> | null = gatewayMode
+  // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+  // A direct-routed model needs the credential fields even in gateway mode (it isn't going
+  // through the gateway), and it isn't limited to the gateway's enabled providers either.
+  const useDirectCredentials = !gatewayMode || directRouting
+  const enabledProviders: Set<string> | null = gatewayMode && !directRouting
     ? new Set(aiConfig.enabledProviders)
     : null
 
@@ -127,6 +133,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       setAccountId('')
       setApiUrl('')
       setHeaderRows([]) // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+      setDirectRouting(false) // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
       setErrors({})
       setAdvancedOpen(false)
     }
@@ -187,17 +194,16 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
 
     const isOllama = selection?.provider === 'ollama'
     const isCloudflare = selection?.provider === 'cloudflare'
-    const showCredentials = !gatewayMode
 
-    if (showCredentials && selection && !isOllama && !apiToken.trim()) {
+    if (useDirectCredentials && selection && !isOllama && !apiToken.trim()) {
       newErrors.apiToken = 'Please enter your API token'
     }
 
-    if (showCredentials && isCloudflare && !accountId.trim()) {
+    if (useDirectCredentials && isCloudflare && !accountId.trim()) {
       newErrors.accountId = 'Please enter your Cloudflare account ID'
     }
 
-    if (showCredentials && isOllama && !apiUrl.trim()) {
+    if (useDirectCredentials && isOllama && !apiUrl.trim()) {
       newErrors.apiUrl = 'Please enter the Ollama API URL'
     }
 
@@ -226,10 +232,12 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       const config: AiModelConfig = {
         provider: selection!.provider,
         model: finalModelId,
-        apiToken: gatewayMode ? '' : apiToken.trim(),
-        ...(!gatewayMode && accountId.trim() && { accountId: accountId.trim() }),
-        ...(!gatewayMode && apiUrl.trim() && { apiUrl: apiUrl.trim() }),
-        ...(!gatewayMode && Object.keys(headers).length > 0 && { headers }),
+        apiToken: useDirectCredentials ? apiToken.trim() : '',
+        ...(useDirectCredentials && accountId.trim() && { accountId: accountId.trim() }),
+        ...(useDirectCredentials && apiUrl.trim() && { apiUrl: apiUrl.trim() }),
+        ...(useDirectCredentials && Object.keys(headers).length > 0 && { headers }),
+        // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+        ...(directRouting && { routing: 'direct' as const }),
       }
 
       await authenticatedApi.addModel(profile, config)
@@ -248,7 +256,6 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const example = selection ? exampleModel(selection.provider) : null
   const isOllama = selection?.provider === 'ollama'
   const isCloudflare = selection?.provider === 'cloudflare'
-  const showCredentials = !gatewayMode
 
   // Group options by provider for rendering with visual separators.
   const groupedOptions: { provider: string; items: typeof options }[] = []
@@ -299,6 +306,24 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
             ))}
           </Select>
 
+          {/* LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when
+              fixed upstream. Gated on gatewayMode only (not on a provider selection) because
+              flipping it changes which providers the Select above offers. */}
+          {gatewayMode && (
+            <div>
+              <Switch
+                label="Route directly (bypass AI Gateway)"
+                checked={directRouting}
+                onCheckedChange={setDirectRouting}
+              />
+              <p className="text-xs text-kumo-subtle mt-1">
+                Connect straight to this model's own API URL using its own credentials instead
+                of routing through AI Gateway. Needed to reach a provider or endpoint behind an
+                authenticating proxy, such as Cloudflare Access.
+              </p>
+            </div>
+          )}
+
           {/* Custom model fields */}
           {showCustomFields && (
             <>
@@ -325,7 +350,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           )}
 
           {/* Cloudflare account ID (the Workers AI REST endpoint is account-scoped) */}
-          {showCredentials && isCloudflare && (
+          {useDirectCredentials && isCloudflare && (
             <Input
               label="Cloudflare Account ID"
               placeholder="e.g., 0123456789abcdef0123456789abcdef"
@@ -338,7 +363,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           )}
 
           {/* API Token */}
-          {showCredentials && selection && (
+          {useDirectCredentials && selection && (
             <SensitiveInput
               label="API Token"
               placeholder={API_TOKEN_PLACEHOLDERS[selection.provider]}
@@ -357,7 +382,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           )}
 
           {/* Ollama API URL (always visible for Ollama) */}
-          {showCredentials && isOllama && (
+          {useDirectCredentials && isOllama && (
             <Input
               label="API URL"
               placeholder="http://localhost:11434"
@@ -372,7 +397,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           {/* Advanced Settings for non-Ollama providers */}
           {/* LOCAL PATCH: dropped the !isCloudflare exclusion so Workers AI can use a custom
               API URL (e.g. an Access-protected proxy) — remove when fixed upstream */}
-          {showCredentials && selection && !isOllama && (
+          {useDirectCredentials && selection && !isOllama && (
             <Collapsible.Root
               open={advancedOpen}
               onOpenChange={setAdvancedOpen}

@@ -1179,6 +1179,17 @@ export type AiModelConfig = {
    * caller values win. Do not use this to set the provider's own auth header — use apiToken.
    */
   headers?: Record<string, string>;
+
+  // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+  /**
+   * When set to `"direct"`, this model bypasses AI Gateway routing entirely and connects
+   * straight to `apiUrl` (with `headers` applied) using this config's own credentials --
+   * required to reach an endpoint behind an authenticating proxy, such as Cloudflare Access,
+   * that AI Gateway mode would otherwise make unreachable. Omitting this field preserves
+   * existing routing behavior exactly, even if `apiUrl` or `headers` are also set. A string
+   * literal (rather than a boolean) so the routing mode can grow additional values later.
+   */
+  routing?: "direct";
 };
 
 /**
