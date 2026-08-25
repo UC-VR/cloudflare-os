@@ -1,9 +1,15 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { createJudge, describeEval } from "vitest-evals";
 import { expect } from "vitest";
-import { evalMatrix } from "./config.js";
+import { evalMatrix, resolveEvalCommits } from "./config.js";
 import { createWorkshopHarness } from "./harness.js";
-import type { EvalRunInput, EvalRunOutput, EvalTask } from "./task.js";
+import { taskSourceVersion, type EvalRunInput, type EvalRunOutput, type EvalTask }
+  from "./task.js";
 import { resolveWorkshopTarget } from "./target.js";
+
+const evalCommits = resolveEvalCommits();
 
 const ChecksJudge = createJudge<EvalRunInput, EvalRunOutput>(
   "behavioral checks",
@@ -22,7 +28,7 @@ const ChecksJudge = createJudge<EvalRunInput, EvalRunOutput>(
 );
 
 /** Register one real Gadget task using native Vitest cases and vitest-evals reporting. */
-export function defineTaskEval(task: EvalTask): void {
+export function defineTaskEval(task: EvalTask, sourceUrl: string): void {
   const target = resolveWorkshopTarget();
   const matrix = evalMatrix();
   const cases = matrix.models.flatMap(model =>
@@ -31,7 +37,11 @@ export function defineTaskEval(task: EvalTask): void {
       model,
       trial,
     })));
-  const harness = createWorkshopHarness(task, target);
+  const identity = {
+    ...evalCommits,
+    taskVersion: taskSourceVersion(readFileSync(fileURLToPath(sourceUrl), "utf8")),
+  };
+  const harness = createWorkshopHarness(task, target, identity);
 
   describeEval(task.id, { harness }, it => {
     it.for(cases)("$name", async ({ model, trial }, { run }) => {

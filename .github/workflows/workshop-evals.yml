@@ -53,6 +53,8 @@ jobs:
           CF_AI_GATEWAY_API_TOKEN: ${{ secrets.CF_AI_GATEWAY_TOKEN }}
           WORKSHOP_EVAL_MODELS: ${{ inputs.models }}
           WORKSHOP_EVAL_TRIALS: ${{ inputs.trials }}
+          WORKSHOP_EVAL_COMMIT: ${{ github.sha }}
+          WORKSHOP_EVAL_TARGET_COMMIT: ${{ github.sha }}
         run: |
           pnpm exec vitest run --config vitest.eval.config.ts \
             --shard=${{ matrix.shard }}/3 \

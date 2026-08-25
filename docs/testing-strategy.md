@@ -78,6 +78,7 @@ Each trial reports:
 - tool calls and tool errors; their ratio gives the tool failure rate
 - agent errors
 - provider-reported token and cost metadata when available
+- runner commit, deployed target commit, and task-source hash
 
 All initial task scores come from deterministic code and RPC checks. No LLM judge is used.
 
@@ -85,9 +86,11 @@ A tool error does not fail a task by itself if the agent recovers and delivers t
 behavior. An exception during a verifier check becomes a failed check. This first version does not
 classify platform failures separately from the task score.
 
-Repeated trials are required before comparing models or harnesses. Results must identify the model,
-harness commit, target, task version, and trial. A model comparison holds the harness fixed. A
-harness comparison holds the model fixed.
+Repeated trials are required before comparing models or agent changes. Results identify the model,
+runner commit, target commit, task-source hash, target, and trial. A changed task-source hash is a
+review warning, not an automatic comparison barrier, because comments and formatting also change the
+hash. A model comparison holds the agent implementation fixed; an agent comparison holds the model
+fixed.
 
 ## Running evals
 

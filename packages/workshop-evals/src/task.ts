@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { JsonValue } from "vitest-evals";
 import type { EvalVerifier } from "./verifier.js";
 
@@ -40,6 +42,18 @@ export function defineEvalTask(task: EvalTask): EvalTask {
   });
   return task;
 }
+
+/** Hash checked-in scenario source for provenance; comparison policy decides whether changes matter. */
+export function taskSourceVersion(source: string): string {
+  return createHash("sha256").update(source).digest("hex");
+}
+
+/** Revisions attached to one task's result metadata. */
+export type EvalIdentity = {
+  harnessCommit: string;
+  targetCommit: string;
+  taskVersion: string;
+};
 
 /** One model repetition of an authored task. */
 export type EvalRunInput = {

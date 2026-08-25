@@ -2,7 +2,7 @@ import type { AgentTurnResult } from "@gadgets/integration-tests/agent-session";
 import type { AiChatMessage } from "@gadgets/workshop-shared/api";
 import { createHarness, type JsonValue } from "vitest-evals";
 import { EVAL_RUN_BUDGET_MS } from "./config.js";
-import type { EvalRunInput, EvalRunOutput, EvalTask, EvalTurnResult } from "./task.js";
+import type { EvalIdentity, EvalRunInput, EvalRunOutput, EvalTask, EvalTurnResult } from "./task.js";
 import { measureHistory, toTranscriptEvents } from "./transcript.js";
 import { openWorkshopTarget } from "./target.js";
 import type { WorkshopTarget } from "./target.js";
@@ -12,7 +12,8 @@ const HARNESS_OVERHEAD_MS = 2 * 60_000;
 
 
 /** Adapt one real Workshop task to the generic vitest-evals harness contract. */
-export function createWorkshopHarness(task: EvalTask, target: WorkshopTarget) {
+export function createWorkshopHarness(
+    task: EvalTask, target: WorkshopTarget, identity: EvalIdentity) {
   return createHarness<EvalRunInput, EvalRunOutput>({
     name: "workshop-agent",
     run: async ({ input, signal }) => {
@@ -63,6 +64,7 @@ export function createWorkshopHarness(task: EvalTask, target: WorkshopTarget) {
           taskId: task.id,
           expectation: task.expectation,
           target: target.kind,
+          ...identity,
         },
       };
     },

@@ -100,4 +100,4 @@ timeline. Put a sentence of placeholder detail under each — I'll replace them 
   }],
 });
 
-defineTaskEval(task);
+defineTaskEval(task, import.meta.url);
