@@ -70,9 +70,10 @@ For each trial, the report shows:
 - agent errors and provider errors present in the transcript
 - provider-reported tokens and cost when available
 - model, local or preview target, and trial number
-- runner commit, target commit, and a hash of the task prompts and expectation
+- runner commit, target commit, and task version
 
-Verifier changes remain attributable through the runner commit without changing the task-input hash.
+`taskVersion` is a SHA-256 hash of the prompts and expectation. Verifier changes remain attributable
+through the runner commit without changing the task version.
 
 The current tasks use deterministic code and RPC checks. They do not use an LLM judge.
 

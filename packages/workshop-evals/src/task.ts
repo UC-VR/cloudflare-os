@@ -43,7 +43,7 @@ export function defineEvalTask(task: EvalTask): EvalTask {
   return task;
 }
 
-/** Hash prompts and expectation; verifier code remains attributable through the runner commit. */
+/** Derive taskVersion from prompts and expectation; verifier code belongs to the runner commit. */
 export function taskVersion(task: EvalTask): string {
   const input = { expectation: task.expectation, prompts: task.turns.map(turn => turn.prompt) };
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
