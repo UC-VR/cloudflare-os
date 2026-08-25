@@ -46,13 +46,6 @@ export function taskVersion(task: EvalTask): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
-/** Revisions attached to one task's result metadata. */
-export type EvalIdentity = {
-  harnessCommit: string;
-  targetCommit: string;
-  taskVersion: string;
-};
-
 /** One model repetition of an authored task. */
 export type EvalRunInput = {
   model: string;

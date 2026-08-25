@@ -13,7 +13,8 @@ const VERIFIER_THREW = "verifier.threw";
 // indistinguishable from an author who supplied no evidence at all.
 const UNSERIALIZABLE_EVIDENCE = "<evidence was not JSON-serializable>";
 
-function truncateError(message: string): string {
+function describeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
   return message.length > EVIDENCE_LIMIT ? `${message.slice(0, EVIDENCE_LIMIT)}...` : message;
 }
 
@@ -86,8 +87,7 @@ export class EvalVerifier {
       if (evidence !== undefined) check.evidence = evidence;
       this.#checks[index] = check;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.#checks[index] = { id, pass: false, evidence: truncateError(message) };
+      this.#checks[index] = { id, pass: false, evidence: describeError(error) };
     }
   }
 
@@ -99,7 +99,6 @@ export class EvalVerifier {
     return connectTyped<Session>(this.#session, resolveGadget(this.workpieces, gadgetTitle));
   }
 
-
   /**
    * Preserves checks recorded before an error escapes the verifier body. The escaped error becomes
    * a final failed check instead of erasing the trial's earlier evidence.
@@ -108,8 +107,7 @@ export class EvalVerifier {
     try {
       await verify(this);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.#checks.push({ id: VERIFIER_THREW, pass: false, evidence: truncateError(message) });
+      this.#checks.push({ id: VERIFIER_THREW, pass: false, evidence: describeError(error) });
     }
     await Promise.all(this.#pending);
     return this.#checks;

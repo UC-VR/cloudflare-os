@@ -2,10 +2,12 @@ import { execFileSync } from "node:child_process";
 
 const DEFAULT_MODELS = ["@cf/zai-org/glm-5.2", "@cf/moonshotai/kimi-k2.7-code"];
 
+/** Time reserved for non-agent work inside a run and for cleanup outside it. */
+export const EVAL_OVERHEAD_BUDGET_MS = 2 * 60_000;
 /** Budget shared by all agent turns and verification inside one trial. */
 export const EVAL_RUN_BUDGET_MS = 30 * 60_000;
-/** Outer Vitest deadline; cleanup gets two minutes after the run budget expires. */
-export const EVAL_TEST_TIMEOUT_MS = EVAL_RUN_BUDGET_MS + 2 * 60_000;
+/** Outer Vitest deadline includes the cleanup reserve. */
+export const EVAL_TEST_TIMEOUT_MS = EVAL_RUN_BUDGET_MS + EVAL_OVERHEAD_BUDGET_MS;
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -32,6 +34,9 @@ export function resolveEvalCommits(
       "WORKSHOP_EVAL_TARGET_COMMIT");
   return { harnessCommit, targetCommit };
 }
+
+/** Code and task identities attached to every eval result. */
+export type EvalIdentity = ReturnType<typeof resolveEvalCommits> & { taskVersion: string };
 
 /** Parse non-secret eval controls. Model credentials belong to the selected target. */
 export function evalMatrix(environment: NodeJS.ProcessEnv = process.env) {
