@@ -348,10 +348,11 @@ function makeHandle(args: HandleArgs): ModelHandle {
 }
 
 /**
- * Resolve an AiModelConfig to a ModelHandle, choosing among three routing modes: the user's own
- * AI Gateway (BYOK unified billing), the platform's AI Gateway (free tier), or direct provider
- * access with the config's own credentials. The handle carries the matching AI Gateway log route
- * for cost accounting, when there is one.
+ * Resolve an AiModelConfig to a ModelHandle, choosing among four routing modes: an explicit
+ * `routing: "direct"` opt-in bypass, the user's own AI Gateway (BYOK unified billing), the
+ * platform's AI Gateway (free tier), or direct provider access with the config's own
+ * credentials as the final fallback. The handle carries the matching AI Gateway log route for
+ * cost accounting, when there is one.
  */
 export function getModel(env: Cloudflare.Env, config: AiModelConfig,
                          initiator: AiChatAuthorInfo,
@@ -362,6 +363,13 @@ export function getModel(env: Cloudflare.Env, config: AiModelConfig,
   // bypass AI Gateway entirely (e.g. to reach an endpoint behind an authenticating proxy that
   // AI Gateway mode would otherwise make unreachable) -- omitting the flag preserves every
   // existing routing decision exactly.
+  //
+  // Consequence, not a bug: a model with `routing: "direct"` gets NEITHER of the other two
+  // modes' benefits, even when options.userGateway is set. No BYOK unified billing -- it always
+  // pays with its own config.apiToken against config.apiUrl (or the provider's default) -- and
+  // no aiGatewayLogRoute cost attribution (handle.aiGatewayLogRoute is always undefined for it,
+  // see getModelDirect below). That is by design (see ops/upstream-patches.json, the
+  // "direct-routing" patch), but easy to trip over when auditing cost/billing paths.
   if (config.routing === "direct") {
     return getModelDirect(config, options.sessionAffinity);
   }

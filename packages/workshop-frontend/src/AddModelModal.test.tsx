@@ -345,15 +345,20 @@ describe('AddModelModal (real @cloudflare/kumo Select/Switch)', () => {
     await click(buttonWithText('Add Model'))
 
     expect(addModel).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain("isn't a valid header name")
+    // Referenced by row index, not by echoing the (here, harmless) entered name back -- see the
+    // next test for the case where echoing it back would leak something secret-shaped.
+    expect(document.body.textContent).toContain("Header 1's name isn't a valid header name")
+    expect(document.body.textContent).not.toContain('CF Access Client Id')
   })
 
   // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
   // The header-row Name/Value fields have no persistent column labels below the placeholder
   // (see AddModelModal.tsx), which makes a full-row transposition -- a value typed into the
   // Name field, a name typed into the Value field -- a plausible UI-induced mistake, not just
-  // an inattentive paste. A name shaped like a pasted ID/token/secret (a long digit run) is
-  // flagged rather than silently saved.
+  // an inattentive paste. A name shaped like a pasted ID/token/secret (long enough, with a long
+  // enough digit run) is flagged rather than silently saved. Realistic version/tenant-style
+  // names ("X-Api-Version-2024", "x-ms-version-2021", "X-Tenant-1234") must NOT trip this --
+  // they carry at most a 4-digit suffix and stay well under the length floor.
   it('flags a header name shaped like a pasted value instead of a header name', async () => {
     await render({ enabled: false })
 
@@ -366,12 +371,76 @@ describe('AddModelModal (real @cloudflare/kumo Select/Switch)', () => {
 
     await click(buttonWithText('Advanced Settings'))
     await click(buttonWithText('Add header'))
-    setInputValue(inputByAriaLabel('Header 1 name'), 'DUMMY-ID-1234')
+    setInputValue(inputByAriaLabel('Header 1 name'), 'user-secret-token-1234567890')
     setInputValue(inputByAriaLabel('Header 1 value'), 'CF-Access-Client-Id')
 
     await click(buttonWithText('Add Model'))
 
     expect(addModel).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('looks like a value, not a header name')
+    expect(document.body.textContent).toContain("Header 1's name looks like a value")
+    // The message must not echo the entered name back -- it may well BE the pasted secret.
+    expect(document.body.textContent).not.toContain('user-secret-token-1234567890')
+  })
+
+  // Realistic header names carrying a version/tenant suffix must be accepted, not blocked by
+  // the digit-run heuristic above.
+  it.each([
+    'X-Api-Version-2024',
+    'x-ms-version-2021',
+    'X-Tenant-1234',
+  ])('accepts the realistic versioned header name "%s"', async (headerName) => {
+    await render({ enabled: false })
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Advanced Settings'))
+    await click(buttonWithText('Add header'))
+    setInputValue(inputByAriaLabel('Header 1 name'), headerName)
+    setInputValue(inputByAriaLabel('Header 1 value'), 'some-value')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).toHaveBeenCalledTimes(1)
+    const [, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
+    expect(config.headers).toEqual({ [headerName]: 'some-value' })
+  })
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  // validate() used to run the header block unconditionally even though onSubmit only includes
+  // headers -- and the header editor (including errors.headers) is only ever rendered -- when
+  // useDirectCredentials is set. Repro: toggle direct credentials on, half-fill a header row,
+  // toggle direct credentials back off (headerRows survives; only the derived flag changes),
+  // then Save. Before the fix this was a silent dead end: validate() still rejected on the
+  // half-filled row, but the error had nowhere left to render.
+  it('lets Save proceed when a half-filled header row is left behind after leaving direct-credentials mode', async () => {
+    await render(GATEWAY_ANTHROPIC_ONLY)
+
+    const directSwitch = document.querySelector('[role="switch"]')!
+    await toggleSwitch(directSwitch) // useDirectCredentials -> true
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Advanced Settings'))
+    await click(buttonWithText('Add header'))
+    setInputValue(inputByAriaLabel('Header 1 name'), 'CF-Access-Client-Id')
+    // Value deliberately left blank.
+
+    await toggleSwitch(directSwitch) // useDirectCredentials -> false
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).toHaveBeenCalledTimes(1)
+    const [, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
+    expect(config.headers).toBeUndefined()
   })
 })

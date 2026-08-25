@@ -41,10 +41,13 @@ const FALLBACK_EXAMPLE_MODEL = { modelId: 'gemma4:31b', name: 'Gemma 4 31B' }
 // RFC 7230 field-name = 1*tchar. A name outside this grammar makes the real fetch() throw
 // later, invisibly -- catch it at save time instead. Header rows have no persistent labels
 // (see the JSX below), so a value pasted into the Name field goes undetected unless it's also
-// shape-checked; a long digit run is a cheap tell (real header names are words, not IDs/
-// tokens/secrets) without rejecting legitimate names like "X-Request-Id".
+// shape-checked. A bare digit run is too blunt a tell: real header names carry version/year
+// suffixes too ("X-Api-Version-2024", "X-Tenant-1234"), which top out around four consecutive
+// digits and stay well under 16 characters. A pasted secret is both longer and runs digits
+// longer than that, so both conditions have to hold before this is treated as a hard reject.
 const HEADER_TCHAR_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
-const HEADER_NAME_LOOKS_LIKE_VALUE_RE = /\d{3,}/
+const HEADER_NAME_LOOKS_LIKE_VALUE_RE = /\d{5,}/
+const HEADER_NAME_LOOKS_LIKE_VALUE_MIN_LENGTH = 16
 
 // Pick an example model to show in the custom-model placeholders for the given provider.
 function exampleModel(provider: AiModelProvider): { modelId: string, name: string } {
@@ -227,31 +230,44 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     }
 
     // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
-    // A half-filled row (name with no value, or value with no name) is silently dropped by
-    // buildHeaders() rather than saved -- and since the value field is a masked SensitiveInput,
-    // a failed paste there is invisible. Reject it instead of saving a model with no headers.
-    if (headerRows.some(r => (r.name.trim() === '') !== (r.value.trim() === ''))) {
-      newErrors.headers = 'Every extra header needs both a name and a value'
-      setAdvancedOpen(true)
-    } else {
-      // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
-      // See HEADER_TCHAR_RE / HEADER_NAME_LOOKS_LIKE_VALUE_RE above for why these two checks
-      // exist. Only run once every row is fully filled or fully blank (the check above), so
-      // this doesn't pile a second error message onto an already-flagged half-filled row.
-      const illegalNameRow = headerRows.find(
-          r => r.name.trim() !== '' && !HEADER_TCHAR_RE.test(r.name.trim()))
-      const valueShapedNameRow = !illegalNameRow && headerRows.find(
-          r => r.name.trim() !== '' && HEADER_NAME_LOOKS_LIKE_VALUE_RE.test(r.name.trim()))
-      if (illegalNameRow) {
-        newErrors.headers =
-            `"${illegalNameRow.name.trim()}" isn't a valid header name (letters, digits, and ` +
-            `!#$%&'*+-.^_\`|~ only -- no spaces)`
+    // Everything below only matters when direct credentials are in play: onSubmit only includes
+    // headers when useDirectCredentials is set, and the header editor itself (including the
+    // errors.headers display) is only rendered then -- see the JSX gate below. Validating
+    // unconditionally used to be a silent dead end: toggle direct on, half-fill a header row,
+    // toggle direct off, and Save did nothing, with no error ever shown.
+    if (useDirectCredentials) {
+      // A half-filled row (name with no value, or value with no name) is silently dropped by
+      // buildHeaders() rather than saved -- and since the value field is a masked SensitiveInput,
+      // a failed paste there is invisible. Reject it instead of saving a model with no headers.
+      if (headerRows.some(r => (r.name.trim() === '') !== (r.value.trim() === ''))) {
+        newErrors.headers = 'Every extra header needs both a name and a value'
         setAdvancedOpen(true)
-      } else if (valueShapedNameRow) {
-        newErrors.headers =
-            `"${valueShapedNameRow.name.trim()}" looks like a value, not a header name -- check ` +
-            `the Name and Value columns aren't swapped`
-        setAdvancedOpen(true)
+      } else {
+        // See HEADER_TCHAR_RE / HEADER_NAME_LOOKS_LIKE_VALUE_RE above for why these two checks
+        // exist. Only run once every row is fully filled or fully blank (the check above), so
+        // this doesn't pile a second error message onto an already-flagged half-filled row.
+        // Referenced by row index rather than by echoing the entered name back into the
+        // message: the "looks like a value" branch fires precisely when something that looks
+        // like a secret was pasted into the Name column, and this file's own policy elsewhere
+        // (see the toast in handleSubmit) is to never surface header values, so the message
+        // shouldn't leak one either.
+        const illegalNameIndex = headerRows.findIndex(
+            r => r.name.trim() !== '' && !HEADER_TCHAR_RE.test(r.name.trim()))
+        const valueShapedNameIndex = illegalNameIndex !== -1 ? -1 : headerRows.findIndex(
+            r => r.name.trim() !== '' &&
+                r.name.trim().length >= HEADER_NAME_LOOKS_LIKE_VALUE_MIN_LENGTH &&
+                HEADER_NAME_LOOKS_LIKE_VALUE_RE.test(r.name.trim()))
+        if (illegalNameIndex !== -1) {
+          newErrors.headers =
+              `Header ${illegalNameIndex + 1}'s name isn't a valid header name (letters, ` +
+              `digits, and !#$%&'*+-.^_\`|~ only -- no spaces)`
+          setAdvancedOpen(true)
+        } else if (valueShapedNameIndex !== -1) {
+          newErrors.headers =
+              `Header ${valueShapedNameIndex + 1}'s name looks like a value, not a header name ` +
+              `-- check the Name and Value columns aren't swapped`
+          setAdvancedOpen(true)
+        }
       }
     }
 

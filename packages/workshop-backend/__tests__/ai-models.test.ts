@@ -607,6 +607,32 @@ describe("getModel routing: explicit direct bypass in AI Gateway mode (LOCAL PAT
     expect(request.url).toBe("https://access-proxy.example.com/anthropic/v1/messages");
   }, 15000);
 
+  // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+  // Pins the branch ORDER, not just the outcome. getModel() checks `routing === "direct"` before
+  // `options.userGateway`; every other test in this block passes no `userGateway`, so a rebase
+  // landing the early return between the userGateway and platform-gateway checks would still pass
+  // them all while silently routing a connected user's "direct" model through their own BYOK
+  // gateway instead of the Access-protected apiUrl the operator configured. Passing userGateway
+  // here makes that reordering fail: moving the early return after the userGateway branch (but
+  // still before the platform-gateway branch) resolves this to the user's gateway baseUrl instead
+  // of apiUrl.
+  it("still wins over a connected user's Gateway when routing is direct", async () => {
+    const handle = getModel(env(), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      apiUrl: "https://access-proxy.example.com/anthropic",
+      routing: "direct",
+    }, INITIATOR, {
+      userGateway: { accountId: "user-account-id", apiKey: "user-token" },
+    });
+
+    expect(handle.model.baseUrl).toBe("https://access-proxy.example.com/anthropic");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://access-proxy.example.com/anthropic/v1/messages");
+  }, 15000);
+
   it("sends config.headers on the outbound request when routing is direct", async () => {
     const handle = getModel(env(), {
       ...ANTHROPIC_CONFIG,
