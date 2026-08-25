@@ -3,9 +3,6 @@ import { createHash } from "node:crypto";
 import type { JsonValue } from "vitest-evals";
 import type { EvalVerifier } from "./verifier.js";
 
-/** Whether a task should gate a run or only report frontier capability. */
-export type EvalExpectation = "required" | "frontier";
-
 /** Result of one deterministic observation of the Gadget the agent built. */
 export type EvalCheckOutcome = {
   pass: boolean;
@@ -28,7 +25,7 @@ export type EvalTurn = {
 /** A real Workshop task run through the production agent. */
 export type EvalTask = {
   id: string;
-  expectation: EvalExpectation;
+  expectation: "required" | "frontier";
   turns: readonly [EvalTurn, ...EvalTurn[]];
 };
 
@@ -74,8 +71,6 @@ export type EvalRunOutput = {
   turns: EvalTurnResult[];
   metrics: {
     modelTurns: number;
-    toolCalls: number;
     toolErrors: number;
-    agentErrors: number;
   };
 };

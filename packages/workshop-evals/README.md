@@ -79,9 +79,10 @@ The current tasks use deterministic code and RPC checks. They do not use an LLM 
 
 ## CI
 
-The **Workshop evals** workflow is manual-only. Start it with `workflow_dispatch` and choose the model
-list and trial count. It uses existing repository AI Gateway credentials, native Vitest sharding, and
-the official `getsentry/vitest-evals` action to publish one combined report.
+The **Workshop evals** workflow is manual-only. Start it with `workflow_dispatch`; leave models blank
+to use the suite defaults, or provide a comma-separated override. It uses existing repository AI
+Gateway credentials, native Vitest sharding, and the official `getsentry/vitest-evals` action to
+publish one combined report.
 
 ## Add a scenario
 

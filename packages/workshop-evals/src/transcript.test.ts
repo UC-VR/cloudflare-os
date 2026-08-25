@@ -50,6 +50,5 @@ it("normalizes Workshop messages and failed tools for vitest-evals", () => {
     modelTurns: 1,
     toolCalls: 1,
     toolErrors: 1,
-    agentErrors: 1,
   });
 });

@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AiChatAuthorInfo, AiChatHistoryPage, AiChatMessage, AiChatMetadata }
+import type { AiChatHistoryPage, AiChatMessage, AiChatMetadata }
   from "@gadgets/workshop-shared/api";
-import {
-  finalAssistantText,
-} from "../src/agent-session.js";
 import { AgentTurnCompletion, loadAllChatHistory } from "../src/agent-session-internals.js";
 
 function metadata(active: boolean): AiChatMetadata {
@@ -117,16 +114,5 @@ it("loads history pages in authoritative ascending order", async () => {
     return Promise.resolve(page);
   });
   expect(history.map(entry => entry.sequence)).toEqual([0, 1, 2, 3, 4, 5]);
-});
-
-it("returns the final non-empty assistant message from canonical history", () => {
-  const agent: AiChatAuthorInfo = { type: "agent", id: "model", name: "Model" };
-  const history = [
-    message(0),
-    { ...message(1), author: agent, message: "first" },
-    { ...message(2), author: agent, message: "" },
-  ];
-
-  expect(finalAssistantText(history)).toBe("first");
 });
 

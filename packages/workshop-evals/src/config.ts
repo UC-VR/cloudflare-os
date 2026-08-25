@@ -1,17 +1,5 @@
 import { execFileSync } from "node:child_process";
 
-/** Models and repetitions expanded with native Vitest case tables. */
-export type EvalMatrix = {
-  models: string[];
-  trials: number;
-};
-
-/** Git revisions needed to reproduce the runner and deployed target. */
-export type EvalCommits = {
-  harnessCommit: string;
-  targetCommit: string;
-};
-
 const DEFAULT_MODELS = ["@cf/zai-org/glm-5.2", "@cf/moonshotai/kimi-k2.7-code"];
 
 /** Budget shared by all agent turns and verification inside one trial. */
@@ -35,7 +23,7 @@ function requireGitCommit(value: string, name: string): string {
 /** Resolve self-contained runner and target revisions before shard artifacts leave the checkout. */
 export function resolveEvalCommits(
     environment: NodeJS.ProcessEnv = process.env,
-    readLocalCommit: () => string = localGitCommit): EvalCommits {
+    readLocalCommit: () => string = localGitCommit) {
   const harnessCommit = requireGitCommit(
       environment.WORKSHOP_EVAL_COMMIT?.trim() || environment.GITHUB_SHA?.trim() || readLocalCommit(),
       "WORKSHOP_EVAL_COMMIT");
@@ -46,7 +34,7 @@ export function resolveEvalCommits(
 }
 
 /** Parse non-secret eval controls. Model credentials belong to the selected target. */
-export function evalMatrix(environment: NodeJS.ProcessEnv = process.env): EvalMatrix {
+export function evalMatrix(environment: NodeJS.ProcessEnv = process.env) {
   const models = (environment.WORKSHOP_EVAL_MODELS ?? "")
     .split(",")
     .map(model => model.trim())

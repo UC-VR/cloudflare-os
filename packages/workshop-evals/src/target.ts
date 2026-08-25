@@ -4,7 +4,7 @@ import {
 } from "@gadgets/integration-tests/harness";
 
 /** Existing credentials used to run models from a local workerd Workshop. */
-export type LocalModelAccess = {
+type LocalModelAccess = {
   kind: "gateway";
   gateway: string;
   accountId: string;
@@ -23,12 +23,6 @@ export type WorkshopTarget = {
   kind: "preview";
   url: URL;
   accessToken: string;
-};
-
-/** One isolated Workshop session with target-specific asynchronous cleanup. */
-export type OpenedWorkshop = {
-  session: AgentSession;
-  [Symbol.asyncDispose](): Promise<void>;
 };
 
 function value(environment: NodeJS.ProcessEnv, key: string): string | undefined {
@@ -102,31 +96,23 @@ function configureGateway(config: WorkerConfig, access: Extract<LocalModelAccess
 
 /** Open one isolated trial against local workerd or a deployed Access preview. */
 export async function openWorkshopTarget(
-    target: WorkshopTarget, model: string, timeoutMs: number): Promise<OpenedWorkshop> {
+    target: WorkshopTarget, model: string, timeoutMs: number) {
   if (target.kind === "preview") {
-    let session: AgentSession | undefined;
-    try {
-      session = await AgentSession.create(target.url, {
-        accessToken: target.accessToken,
-        modelId: model,
-        timeoutMs,
-      });
-      await session.waitForOutputFormats();
-      const openedSession = session;
-      return {
-        session: openedSession,
-        [Symbol.asyncDispose]: async () => {
-          try {
-            await openedSession.deleteWorkspace();
-          } finally {
-            openedSession[Symbol.dispose]();
-          }
-        },
-      };
-    } catch (error) {
-      session?.[Symbol.dispose]();
-      throw error;
-    }
+    const session = await AgentSession.create(target.url, {
+      accessToken: target.accessToken,
+      modelId: model,
+      timeoutMs,
+    });
+    return {
+      session,
+      [Symbol.asyncDispose]: async () => {
+        try {
+          await session.deleteWorkspace();
+        } finally {
+          session[Symbol.dispose]();
+        }
+      },
+    };
   }
 
   const modelAccess = target.modelAccess;
@@ -151,20 +137,16 @@ export async function openWorkshopTarget(
   }
 
   const harness = await startHarness(harnessOptions);
-  let session: AgentSession | undefined;
   try {
-    session = await AgentSession.create(harness.url, sessionOptions);
-    await session.waitForOutputFormats();
-    const openedSession = session;
+    const session = await AgentSession.create(harness.url, sessionOptions);
     return {
-      session: openedSession,
+      session,
       [Symbol.asyncDispose]: async () => {
-        openedSession[Symbol.dispose]();
+        session[Symbol.dispose]();
         await harness.server.close();
       },
     };
   } catch (error) {
-    session?.[Symbol.dispose]();
     await harness.server.close();
     throw error;
   }

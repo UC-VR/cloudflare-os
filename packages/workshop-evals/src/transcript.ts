@@ -65,12 +65,7 @@ export function measureHistory(history: readonly AiChatMessage[]) {
   let modelTurns = 0;
   let toolCalls = 0;
   let toolErrors = 0;
-  let agentErrors = 0;
   for (const message of history) {
-    if (message.type === "error") {
-      agentErrors++;
-      continue;
-    }
     if (message.type !== "message" || message.author.type !== "agent") continue;
     modelTurns++;
     for (const call of message.toolCalls ?? []) {
@@ -78,5 +73,5 @@ export function measureHistory(history: readonly AiChatMessage[]) {
       if (call.error !== undefined) toolErrors++;
     }
   }
-  return { modelTurns, toolCalls, toolErrors, agentErrors };
+  return { modelTurns, toolCalls, toolErrors };
 }

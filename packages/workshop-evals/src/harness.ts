@@ -29,7 +29,7 @@ export function createWorkshopHarness(
 
       for (const turn of task.turns) {
         const agentStartedAt = Date.now();
-        const result = await opened.session.run(turn.prompt, { signal });
+        const result = await opened.session.run(turn.prompt, signal);
         const agentDurationMs = Date.now() - agentStartedAt;
         ({ history } = result);
         usage = result.usage;
@@ -43,7 +43,7 @@ export function createWorkshopHarness(
         });
       }
 
-      const metrics = measureHistory(history);
+      const { toolCalls, ...metrics } = measureHistory(history);
       const usageMetadata: Record<string, JsonValue> = { tokenScope: "last-model-step" };
       if (usage.costUsd !== undefined) usageMetadata.costUsd = usage.costUsd;
 
@@ -54,7 +54,7 @@ export function createWorkshopHarness(
           provider: "cloudflare",
           model: input.model,
           totalTokens: usage.totalTokens,
-          toolCalls: metrics.toolCalls,
+          toolCalls,
           metadata: usageMetadata,
         },
         timings: { totalMs: Date.now() - startedAt },

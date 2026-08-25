@@ -37,7 +37,6 @@ agent scenarios.
 - drive one chat across multiple turns
 - read canonical history and workpieces
 - connect to generated Gadget RPCs
-- accept the current chat's proposed changes
 
 `vitest-evals` owns generic evaluation infrastructure:
 

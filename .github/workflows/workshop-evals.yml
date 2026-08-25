@@ -4,9 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: Comma-separated Workshop model IDs
-        default: "@cf/zai-org/glm-5.2,@cf/moonshotai/kimi-k2.7-code"
-        required: true
+        description: Comma-separated Workshop model IDs; blank uses the suite defaults
       trials:
         description: Repetitions per task and model
         default: "3"
@@ -44,7 +42,6 @@ jobs:
         run: pnpm build
 
       - name: Run eval shard
-        id: run
         continue-on-error: true
         working-directory: packages/workshop-evals
         env:
@@ -54,7 +51,6 @@ jobs:
           WORKSHOP_EVAL_MODELS: ${{ inputs.models }}
           WORKSHOP_EVAL_TRIALS: ${{ inputs.trials }}
           WORKSHOP_EVAL_COMMIT: ${{ github.sha }}
-          WORKSHOP_EVAL_TARGET_COMMIT: ${{ github.sha }}
         run: |
           pnpm exec vitest run --config vitest.eval.config.ts \
             --shard=${{ matrix.shard }}/3 \
