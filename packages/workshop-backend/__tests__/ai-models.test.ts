@@ -449,6 +449,84 @@ describe("getModel direct routing (no gateway)", () => {
         .toThrow("This Workers AI model has no Cloudflare credentials.");
   });
 
+  // LOCAL PATCH: honor config.apiUrl for Workers AI — remove when fixed upstream
+  // The discriminating case: accountId omitted, apiUrl present, apiToken present. The OLD guard
+  // (`!config.accountId || !config.apiToken`) throws here regardless of apiUrl; the new guard
+  // succeeds because apiUrl substitutes for accountId. Reverting the guard to its old form makes
+  // this test fail.
+  it("honors config.apiUrl for direct Workers AI, making accountId optional", async () => {
+    const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...WORKERS_AI_CONFIG,
+      accountId: undefined,
+      apiToken: "user-token",
+      apiUrl: "https://access-proxy.example.com/ai/v1",
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe("https://access-proxy.example.com/ai/v1");
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://access-proxy.example.com/ai/v1/chat/completions");
+  }, 15000);
+
+  // LOCAL PATCH: honor config.apiUrl for Workers AI — remove when fixed upstream
+  // Discriminating regression guard: with accountId omitted and apiUrl present, the OLD guard
+  // (`!config.accountId || !config.apiToken`) would reject this purely because accountId is
+  // missing -- it never gets far enough to report the actual (apiToken) reason. The new guard
+  // treats apiUrl as a substitute for accountId, so the only remaining failure is the missing
+  // token, and it says so specifically (a message the old guard's wording never produces).
+  it("still requires an API token for direct Workers AI even with an apiUrl override", () => {
+    expect(() => getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...WORKERS_AI_CONFIG,
+      accountId: undefined,
+      apiToken: "",
+      apiUrl: "https://access-proxy.example.com/ai/v1",
+    }, INITIATOR)).toThrow("Re-add it with an API token that permits Workers AI.");
+  });
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  it("still honors config.apiUrl for direct Anthropic (regression guard)", () => {
+    const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      apiUrl: "https://access-proxy.example.com/anthropic",
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe("https://access-proxy.example.com/anthropic");
+  });
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  it("sends config.headers on every request for direct Anthropic", async () => {
+    const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      headers: {
+        "CF-Access-Client-Id": "client-id-value",
+        "CF-Access-Client-Secret": "client-secret-value",
+      },
+    }, INITIATOR);
+
+    const request = await captureRequest(handle);
+    expect(request.headers.get("cf-access-client-id")).toBe("client-id-value");
+    expect(request.headers.get("cf-access-client-secret")).toBe("client-secret-value");
+  }, 15000);
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  it("sends config.headers on every request for direct OpenAI", async () => {
+    const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
+      provider: "openai",
+      model: "gpt-5",
+      apiToken: "direct-api-token",
+      headers: {
+        "CF-Access-Client-Id": "client-id-value",
+        "CF-Access-Client-Secret": "client-secret-value",
+      },
+    }, INITIATOR);
+
+    const request = await captureRequest(handle);
+    expect(request.headers.get("cf-access-client-id")).toBe("client-id-value");
+    expect(request.headers.get("cf-access-client-secret")).toBe("client-secret-value");
+  }, 15000);
+
   it("appends /v1 to an Ollama server base URL", () => {
     const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
       provider: "ollama",

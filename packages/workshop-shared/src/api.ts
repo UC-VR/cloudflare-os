@@ -1170,6 +1170,15 @@ export type AiModelConfig = {
    * alternative provider that provides a compatible API.
    */
   apiUrl?: string;
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  /**
+   * Extra HTTP headers to send with every request to this model's API. Useful for endpoints
+   * behind an authenticating proxy — e.g. a Cloudflare Access service token
+   * (`CF-Access-Client-Id` / `CF-Access-Client-Secret`). Merged into provider defaults;
+   * caller values win. Do not use this to set the provider's own auth header — use apiToken.
+   */
+  headers?: Record<string, string>;
 };
 
 /**

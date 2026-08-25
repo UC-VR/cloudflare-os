@@ -102,6 +102,8 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const [apiToken, setApiToken] = useState('')
   const [accountId, setAccountId] = useState('')
   const [apiUrl, setApiUrl] = useState('')
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  const [headerRows, setHeaderRows] = useState<{ name: string, value: string }[]>([])
 
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -124,6 +126,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       setApiToken('')
       setAccountId('')
       setApiUrl('')
+      setHeaderRows([]) // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
       setErrors({})
       setAdvancedOpen(false)
     }
@@ -145,6 +148,29 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     setApiToken('')
     setAccountId('')
     setApiUrl(sel.provider === 'ollama' ? 'http://localhost:11434' : '')
+    setHeaderRows([]) // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  }
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  const addHeaderRow = () => setHeaderRows(prev => [...prev, { name: '', value: '' }])
+  const updateHeaderRow = (index: number, patch: Partial<{ name: string, value: string }>) =>
+    setHeaderRows(prev => prev.map((row, i) => i === index ? { ...row, ...patch } : row))
+  const removeHeaderRow = (index: number) =>
+    setHeaderRows(prev => prev.filter((_, i) => i !== index))
+
+  // Fold complete header rows into a plain record; rows with a blank name or value are dropped.
+  const buildHeaders = (): Record<string, string> => {
+    const result: Record<string, string> = {}
+    for (const row of headerRows) {
+      const name = row.name.trim()
+      const value = row.value.trim()
+      // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+      // A row only counts once both the name and value are filled in; a blank value (e.g. an
+      // empty CF-Access-Client-Secret) is worse than omitting the header, so drop it silently.
+      if (!name || !value) continue
+      result[name] = value
+    }
+    return result
   }
 
   const validate = (): boolean => {
@@ -194,12 +220,16 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
         name: finalDisplayName,
       }
 
+      // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+      const headers = buildHeaders()
+
       const config: AiModelConfig = {
         provider: selection!.provider,
         model: finalModelId,
         apiToken: gatewayMode ? '' : apiToken.trim(),
         ...(!gatewayMode && accountId.trim() && { accountId: accountId.trim() }),
         ...(!gatewayMode && apiUrl.trim() && { apiUrl: apiUrl.trim() }),
+        ...(!gatewayMode && Object.keys(headers).length > 0 && { headers }),
       }
 
       await authenticatedApi.addModel(profile, config)
@@ -339,8 +369,10 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
             />
           )}
 
-          {/* Advanced Settings for non-Ollama, non-Cloudflare providers */}
-          {showCredentials && selection && !isOllama && !isCloudflare && (
+          {/* Advanced Settings for non-Ollama providers */}
+          {/* LOCAL PATCH: dropped the !isCloudflare exclusion so Workers AI can use a custom
+              API URL (e.g. an Access-protected proxy) — remove when fixed upstream */}
+          {showCredentials && selection && !isOllama && (
             <Collapsible.Root
               open={advancedOpen}
               onOpenChange={setAdvancedOpen}
@@ -354,6 +386,37 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
                   value={apiUrl}
                   onChange={(e) => setApiUrl(e.target.value)}
                 />
+
+                {/* LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream */}
+                <div className="mt-4">
+                  <div className="text-sm font-medium mb-2">Extra headers</div>
+                  <div className="text-xs text-kumo-subtle mb-2">
+                    Extra HTTP headers sent with every request to this model's API — e.g. CF-Access-Client-Id
+                    and CF-Access-Client-Secret for an endpoint behind Cloudflare Access.
+                  </div>
+                  {headerRows.map((row, index) => (
+                    <div key={index} className="flex gap-2 mb-2">
+                      <Input
+                        placeholder="Header name"
+                        value={row.name}
+                        onChange={(e) => updateHeaderRow(index, { name: e.target.value })}
+                        className="flex-1"
+                      />
+                      <SensitiveInput
+                        placeholder="Header value"
+                        value={row.value}
+                        onValueChange={(v) => updateHeaderRow(index, { value: v })}
+                        className="flex-1"
+                      />
+                      <Button variant="secondary" onClick={() => removeHeaderRow(index)}>
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="secondary" onClick={addHeaderRow}>
+                    Add header
+                  </Button>
+                </div>
               </Collapsible.DefaultPanel>
             </Collapsible.Root>
           )}

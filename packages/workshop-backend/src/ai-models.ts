@@ -526,16 +526,28 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
           compat: catalog?.compat,
         },
         apiKey: config.apiToken,
+        // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+        headers: config.headers,
         sessionAffinity,
       });
     case "cloudflare": {
       // Workers AI is fetch-only (no Workers-binding transport), so outside AI Gateway mode it's
       // BYOK like every other provider: the user's own account ID and API token come from the
       // model config. (The REST endpoint is account-scoped, hence the extra accountId field.)
-      if (!config.accountId || !config.apiToken) {
+      // LOCAL PATCH: honor config.apiUrl for Workers AI — remove when fixed upstream
+      // accountId is only needed to build the default (non-overridden) URL, so an explicit
+      // apiUrl makes it optional; apiToken is always required. Two separate checks (rather than
+      // one combined condition) so each failure reports its own specific reason.
+      if (!config.apiUrl && !config.accountId) {
         throw new Error(
             "This Workers AI model has no Cloudflare credentials. Re-add it with your " +
-            "Cloudflare account ID and an API token that permits Workers AI.");
+            "Cloudflare account ID (or an explicit API URL) and an API token that permits " +
+            "Workers AI.");
+      }
+      if (!config.apiToken) {
+        throw new Error(
+            "This Workers AI model has no Cloudflare credentials. Re-add it with an API " +
+            "token that permits Workers AI.");
       }
       return makeHandle({
         model: {
@@ -543,7 +555,8 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
           name: catalog?.name ?? config.model,
           api: "openai-completions",
           provider: "cloudflare-workers-ai",
-          baseUrl: `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/v1`,
+          // LOCAL PATCH: honor config.apiUrl for Workers AI — remove when fixed upstream
+          baseUrl: config.apiUrl ?? `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/v1`,
           reasoning: catalog?.reasoning ?? false,
           input: catalog?.input ?? ["text"],
           cost: catalog?.cost ?? ZERO_COST,
@@ -551,6 +564,8 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
           compat: workersAiCompat(catalog),
         },
         apiKey: config.apiToken,
+        // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+        headers: config.headers,
         sessionAffinity,
       });
     }
@@ -569,6 +584,8 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
           thinkingLevelMap: catalog?.thinkingLevelMap,
         },
         apiKey: config.apiToken,
+        // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+        headers: config.headers,
         sessionAffinity,
       });
     case "ollama":
@@ -616,9 +633,10 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
 
           ...window,
         },
+        // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
         ...(config.apiToken === ""
-            ? { apiKey: "unused", headers: { Authorization: null } }
-            : { apiKey: config.apiToken }),
+            ? { apiKey: "unused", headers: { Authorization: null, ...config.headers } }
+            : { apiKey: config.apiToken, headers: config.headers }),
         sessionAffinity,
       });
     case "openai":
@@ -637,6 +655,8 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
           compat: catalog?.compat,
         },
         apiKey: config.apiToken,
+        // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+        headers: config.headers,
         sessionAffinity,
       });
     default:
