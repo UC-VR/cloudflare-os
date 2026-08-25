@@ -84,6 +84,19 @@ function buttonWithText(text: string): HTMLButtonElement {
   return button as HTMLButtonElement
 }
 
+// LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+// The header-row Name/Value fields have no <label> element (see AddModelModal.tsx), only an
+// aria-label -- inputForLabel() above can't find them. Selecting by accessible name (not by
+// placeholder+index, as the rest of this file's header-row tests do) is what actually catches
+// a labels-swapped-but-bindings-correct regression: if a future edit swaps the two aria-label
+// strings, this resolves to the WRONG underlying field, and the resulting header content is
+// wrong even though nothing in buildHeaders() changed.
+function inputByAriaLabel(label: string): HTMLInputElement {
+  const input = document.querySelector(`input[aria-label="${label}"]`)
+  if (!input) throw new Error(`no input found with aria-label "${label}"`)
+  return input as HTMLInputElement
+}
+
 async function click(el: Element) {
   await act(async () => {
     el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
@@ -277,5 +290,88 @@ describe('AddModelModal (real @cloudflare/kumo Select/Switch)', () => {
 
     expect(addModel).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('Every extra header needs both a name and a value')
+  })
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  // Selects each field by its accessible name (aria-label), not by placeholder+index like the
+  // tests above. This is the actual guard against a labels-swapped-but-bindings-correct
+  // regression: if the two aria-label strings below were ever swapped, this test would type
+  // the name into what it thinks is the name field but is actually the value-bound one, and
+  // the resulting config.headers would come out wrong even though buildHeaders() itself never
+  // changed. It also pins that the header-row fields have a real accessible name at all --
+  // before this patch they had none (Kumo logs "Input must have an accessible name" for a
+  // field with neither `label` nor `aria-label`).
+  it('binds the header row fields the accessible-name selectors say they are bound to', async () => {
+    await render({ enabled: false })
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Advanced Settings'))
+    await click(buttonWithText('Add header'))
+
+    setInputValue(inputByAriaLabel('Header 1 name'), 'CF-Access-Client-Id')
+    setInputValue(inputByAriaLabel('Header 1 value'), 'client-id-value')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).toHaveBeenCalledTimes(1)
+    const [, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
+    expect(config.headers).toEqual({ 'CF-Access-Client-Id': 'client-id-value' })
+  })
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  // A header name outside RFC 7230's tchar grammar (here: a space) would make the real fetch()
+  // throw later, invisibly. Caught at save time instead.
+  it('rejects a header name that is not a legal HTTP token', async () => {
+    await render({ enabled: false })
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Advanced Settings'))
+    await click(buttonWithText('Add header'))
+    setInputValue(inputByAriaLabel('Header 1 name'), 'CF Access Client Id')
+    setInputValue(inputByAriaLabel('Header 1 value'), 'client-id-value')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain("isn't a valid header name")
+  })
+
+  // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+  // The header-row Name/Value fields have no persistent column labels below the placeholder
+  // (see AddModelModal.tsx), which makes a full-row transposition -- a value typed into the
+  // Name field, a name typed into the Value field -- a plausible UI-induced mistake, not just
+  // an inattentive paste. A name shaped like a pasted ID/token/secret (a long digit run) is
+  // flagged rather than silently saved.
+  it('flags a header name shaped like a pasted value instead of a header name', async () => {
+    await render({ enabled: false })
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Advanced Settings'))
+    await click(buttonWithText('Add header'))
+    setInputValue(inputByAriaLabel('Header 1 name'), 'DUMMY-ID-1234')
+    setInputValue(inputByAriaLabel('Header 1 value'), 'CF-Access-Client-Id')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('looks like a value, not a header name')
   })
 })

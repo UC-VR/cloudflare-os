@@ -37,6 +37,15 @@ const API_TOKEN_PLACEHOLDERS: Record<AiModelProvider, string> = {
 // (currently Ollama, which serves whatever the user has pulled locally).
 const FALLBACK_EXAMPLE_MODEL = { modelId: 'gemma4:31b', name: 'Gemma 4 31B' }
 
+// LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+// RFC 7230 field-name = 1*tchar. A name outside this grammar makes the real fetch() throw
+// later, invisibly -- catch it at save time instead. Header rows have no persistent labels
+// (see the JSX below), so a value pasted into the Name field goes undetected unless it's also
+// shape-checked; a long digit run is a cheap tell (real header names are words, not IDs/
+// tokens/secrets) without rejecting legitimate names like "X-Request-Id".
+const HEADER_TCHAR_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const HEADER_NAME_LOOKS_LIKE_VALUE_RE = /\d{3,}/
+
 // Pick an example model to show in the custom-model placeholders for the given provider.
 function exampleModel(provider: AiModelProvider): { modelId: string, name: string } {
   const first = Object.entries(SUGGESTED_MODELS[provider])[0]
@@ -224,6 +233,26 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     if (headerRows.some(r => (r.name.trim() === '') !== (r.value.trim() === ''))) {
       newErrors.headers = 'Every extra header needs both a name and a value'
       setAdvancedOpen(true)
+    } else {
+      // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+      // See HEADER_TCHAR_RE / HEADER_NAME_LOOKS_LIKE_VALUE_RE above for why these two checks
+      // exist. Only run once every row is fully filled or fully blank (the check above), so
+      // this doesn't pile a second error message onto an already-flagged half-filled row.
+      const illegalNameRow = headerRows.find(
+          r => r.name.trim() !== '' && !HEADER_TCHAR_RE.test(r.name.trim()))
+      const valueShapedNameRow = !illegalNameRow && headerRows.find(
+          r => r.name.trim() !== '' && HEADER_NAME_LOOKS_LIKE_VALUE_RE.test(r.name.trim()))
+      if (illegalNameRow) {
+        newErrors.headers =
+            `"${illegalNameRow.name.trim()}" isn't a valid header name (letters, digits, and ` +
+            `!#$%&'*+-.^_\`|~ only -- no spaces)`
+        setAdvancedOpen(true)
+      } else if (valueShapedNameRow) {
+        newErrors.headers =
+            `"${valueShapedNameRow.name.trim()}" looks like a value, not a header name -- check ` +
+            `the Name and Value columns aren't swapped`
+        setAdvancedOpen(true)
+      }
     }
 
     setErrors(newErrors)
@@ -455,16 +484,30 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
                   {errors.headers && (
                     <p className="text-sm text-kumo-danger mb-2">{errors.headers}</p>
                   )}
+                  {/* LOCAL PATCH: header injection for Access-protected endpoints — remove when
+                      fixed upstream. Persistent column labels: a placeholder alone disappears
+                      the instant a row has content, leaving no visual cue for which column is
+                      which once both fields are filled -- see the aria-label on each input
+                      below for the same fix on the accessible-name side. */}
+                  {headerRows.length > 0 && (
+                    <div className="flex gap-2 mb-1 text-xs text-kumo-subtle">
+                      <div className="flex-1">Name</div>
+                      <div className="flex-1">Value</div>
+                      <div className="w-[88px]" />
+                    </div>
+                  )}
                   {headerRows.map((row, index) => (
                     <div key={index} className="flex gap-2 mb-2">
                       <Input
                         placeholder="Header name"
+                        aria-label={`Header ${index + 1} name`}
                         value={row.name}
                         onChange={(e) => updateHeaderRow(index, { name: e.target.value })}
                         className="flex-1"
                       />
                       <SensitiveInput
                         placeholder="Header value"
+                        aria-label={`Header ${index + 1} value`}
                         value={row.value}
                         onValueChange={(v) => updateHeaderRow(index, { value: v })}
                         className="flex-1"
