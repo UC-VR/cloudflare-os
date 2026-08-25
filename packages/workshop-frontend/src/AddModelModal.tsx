@@ -155,13 +155,23 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     setApiToken('')
     setAccountId('')
     setApiUrl(sel.provider === 'ollama' ? 'http://localhost:11434' : '')
-    setHeaderRows([]) // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+    // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+    // Only clear headers when the provider actually changes. The header editor lives inside a
+    // collapsible, so wiping it on every re-selection (e.g. re-picking the same provider, or
+    // switching model/"Other..." within the same provider) silently discarded typed headers the
+    // user could not see happen. Switching providers still clears them: headers are typically
+    // provider-specific (e.g. an Access service token for one endpoint, not another).
+    if (sel.provider !== selection?.provider) {
+      setHeaderRows([])
+    }
   }
 
   // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
   const addHeaderRow = () => setHeaderRows(prev => [...prev, { name: '', value: '' }])
-  const updateHeaderRow = (index: number, patch: Partial<{ name: string, value: string }>) =>
+  const updateHeaderRow = (index: number, patch: Partial<{ name: string, value: string }>) => {
     setHeaderRows(prev => prev.map((row, i) => i === index ? { ...row, ...patch } : row))
+    setErrors(prev => ({ ...prev, headers: '' }))
+  }
   const removeHeaderRow = (index: number) =>
     setHeaderRows(prev => prev.filter((_, i) => i !== index))
 
@@ -207,6 +217,15 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       newErrors.apiUrl = 'Please enter the Ollama API URL'
     }
 
+    // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+    // A half-filled row (name with no value, or value with no name) is silently dropped by
+    // buildHeaders() rather than saved -- and since the value field is a masked SensitiveInput,
+    // a failed paste there is invisible. Reject it instead of saving a model with no headers.
+    if (headerRows.some(r => (r.name.trim() === '') !== (r.value.trim() === ''))) {
+      newErrors.headers = 'Every extra header needs both a name and a value'
+      setAdvancedOpen(true)
+    }
+
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -241,7 +260,16 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       }
 
       await authenticatedApi.addModel(profile, config)
-      toasts.add({ title: 'AI model added successfully', variant: 'success' })
+      // LOCAL PATCH: header injection for Access-protected endpoints — remove when fixed upstream
+      // The config is otherwise write-only: nothing ever shows a user what was saved, so a
+      // dropped or mistyped header is invisible until the model 403s later. Surface which
+      // extra header NAMES were saved (never values) as the cheapest available feedback.
+      const headerNames = useDirectCredentials ? Object.keys(headers) : []
+      toasts.add({
+        title: 'AI model added successfully',
+        variant: 'success',
+        ...(headerNames.length > 0 && { description: `Extra headers saved: ${headerNames.join(', ')}` }),
+      })
       onSuccess()
     } catch (error: any) {
       console.error('Failed to add model:', error)
@@ -282,7 +310,12 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
             className="w-full text-sm"
             placeholder={gatewayMode ? 'Choose a provider...' : 'Choose an AI model...'}
             value={selectValue}
-            onValueChange={(v) => handleModelSelect(v as string)}
+            // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when
+            // fixed upstream. Base UI's Select emits `null` (not a string) when the currently
+            // selected value falls out of the option list -- which the direct-routing toggle
+            // can do, since it changes enabledProviders above. Guard rather than cast, or a
+            // shrinking option list crashes decodeSelection() on a null.startsWith() call.
+            onValueChange={(v) => { if (typeof v === 'string') handleModelSelect(v) }}
             error={errors.selection}
             renderValue={(v) => {
               const opt = options.find(o => o.value === v)
@@ -419,6 +452,9 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
                     Extra HTTP headers sent with every request to this model's API — e.g. CF-Access-Client-Id
                     and CF-Access-Client-Secret for an endpoint behind Cloudflare Access.
                   </div>
+                  {errors.headers && (
+                    <p className="text-sm text-kumo-danger mb-2">{errors.headers}</p>
+                  )}
                   {headerRows.map((row, index) => (
                     <div key={index} className="flex gap-2 mb-2">
                       <Input

@@ -623,6 +623,33 @@ describe("getModel routing: explicit direct bypass in AI Gateway mode (LOCAL PAT
     expect(request.headers.get("cf-access-client-secret")).toBe("client-secret-value");
   }, 15000);
 
+  // LOCAL PATCH: explicit direct-routing bypass for AI Gateway mode — remove when fixed upstream
+  // The combined case, and the one that actually matters operationally: an operator pointing a
+  // model at an Access-protected endpoint sets routing:"direct" AND apiUrl AND headers together
+  // -- that combination is exactly the real config, and every test above this one only ever
+  // exercises apiUrl or headers alone. Commenting out the `routing === "direct"` early return in
+  // getModel() makes this fail (the request goes to the gateway URL with none of these applied).
+  it("honors apiUrl AND headers together when routing is direct (the real operator config)", async () => {
+    const handle = getModel(env(), {
+      ...ANTHROPIC_CONFIG,
+      apiToken: "direct-api-token",
+      apiUrl: "https://access-proxy.example.com/anthropic",
+      routing: "direct",
+      headers: {
+        "CF-Access-Client-Id": "client-id-value",
+        "CF-Access-Client-Secret": "client-secret-value",
+      },
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe("https://access-proxy.example.com/anthropic");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://access-proxy.example.com/anthropic/v1/messages");
+    expect(request.headers.get("cf-access-client-id")).toBe("client-id-value");
+    expect(request.headers.get("cf-access-client-secret")).toBe("client-secret-value");
+  }, 15000);
+
   // The most important test in this block: the regression guard proving we did NOT change any
   // existing model's behavior. Same config as the first test above, minus `routing` -- must
   // still resolve to the gateway URL and silently ignore apiUrl, exactly as before this patch.
