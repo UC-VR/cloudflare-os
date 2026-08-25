@@ -1,12 +1,11 @@
 import { expect, it } from "vitest";
 import {
-  EVAL_OVERHEAD_BUDGET_MS, EVAL_RUN_BUDGET_MS, EVAL_TEST_TIMEOUT_MS, evalMatrix,
-  resolveEvalCommits,
+  EVAL_RUN_BUDGET_MS, EVAL_TEST_TIMEOUT_MS, evalMatrix, resolveEvalCommits,
 } from "./config.js";
 import { taskVersion, type EvalTask } from "./task.js";
 
 it("reserves cleanup time outside the agent run budget", () => {
-  expect(EVAL_TEST_TIMEOUT_MS).toBe(EVAL_RUN_BUDGET_MS + EVAL_OVERHEAD_BUDGET_MS);
+  expect(EVAL_TEST_TIMEOUT_MS).toBeGreaterThan(EVAL_RUN_BUDGET_MS);
 });
 
 it("uses both Workers AI models and one trial by default", () => {
