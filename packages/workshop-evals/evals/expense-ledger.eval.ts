@@ -372,4 +372,4 @@ Show the category breakdown in the UI too.`,
   }],
 });
 
-defineTaskEval(task, import.meta.url);
+defineTaskEval(task);

@@ -159,4 +159,4 @@ It needs a stable server RPC taking and returning plain data, so I can verify it
   }],
 });
 
-defineTaskEval(task, import.meta.url);
+defineTaskEval(task);

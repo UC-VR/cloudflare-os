@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   EVAL_RUN_BUDGET_MS, EVAL_TEST_TIMEOUT_MS, evalMatrix, resolveEvalCommits,
 } from "./config.js";
-import { taskSourceVersion } from "./task.js";
+import { taskVersion, type EvalTask } from "./task.js";
 
 it("reserves cleanup time outside the agent run budget", () => {
   expect(EVAL_TEST_TIMEOUT_MS).toBeGreaterThan(EVAL_RUN_BUDGET_MS);
@@ -46,8 +46,19 @@ it("rejects malformed commit identities", () => {
     .toThrow("40-character Git SHA");
 });
 
-it("versions a task from its checked-in source", () => {
-  const version = taskSourceVersion("defineEvalTask({ id: 'one' })");
+it("versions only the task inputs and expectation", () => {
+  const task: EvalTask = {
+    id: "one",
+    expectation: "required",
+    turns: [{ prompt: "Build it", verify: () => Promise.resolve() }],
+  };
+  const version = taskVersion(task);
   expect(version).toMatch(/^[a-f0-9]{64}$/);
-  expect(taskSourceVersion("defineEvalTask({ id: 'two' })")).not.toBe(version);
+  expect(taskVersion({
+    ...task,
+    turns: [{ prompt: "Build it", verify: async () => { await Promise.resolve(); } }],
+  })).toBe(version);
+  expect(taskVersion({ ...task, turns: [{ ...task.turns[0], prompt: "Build it better" }] }))
+    .not.toBe(version);
+  expect(taskVersion({ ...task, expectation: "frontier" })).not.toBe(version);
 });

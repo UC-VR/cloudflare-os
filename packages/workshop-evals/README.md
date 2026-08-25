@@ -70,10 +70,9 @@ For each trial, the report shows:
 - agent errors and provider errors present in the transcript
 - provider-reported tokens and cost when available
 - model, local or preview target, and trial number
-- runner commit, target commit, and a hash of the task source
+- runner commit, target commit, and a hash of the task prompts and expectation
 
-The task-source hash is provenance, not an automatic comparison barrier. A comment-only edit may
-change it; Braintrust should surface that difference for review rather than reject the comparison.
+Verifier changes remain attributable through the runner commit without changing the task-input hash.
 
 The current tasks use deterministic code and RPC checks. They do not use an LLM judge.
 

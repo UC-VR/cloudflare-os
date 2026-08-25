@@ -78,7 +78,7 @@ Each trial reports:
 - tool calls and tool errors; their ratio gives the tool failure rate
 - agent errors
 - provider-reported token and cost metadata when available
-- runner commit, deployed target commit, and task-source hash
+- runner commit, deployed target commit, and task-input hash
 
 All initial task scores come from deterministic code and RPC checks. No LLM judge is used.
 
@@ -87,10 +87,9 @@ behavior. An exception during a verifier check becomes a failed check. This firs
 classify platform failures separately from the task score.
 
 Repeated trials are required before comparing models or agent changes. Results identify the model,
-runner commit, target commit, task-source hash, target, and trial. A changed task-source hash is a
-review warning, not an automatic comparison barrier, because comments and formatting also change the
-hash. A model comparison holds the agent implementation fixed; an agent comparison holds the model
-fixed.
+runner commit, target commit, task-input hash, target, and trial. The task-input hash covers prompts
+and expectation; verifier changes remain attributable through the runner commit. A model comparison
+holds the agent implementation fixed; an agent comparison holds the model fixed.
 
 ## Running evals
 

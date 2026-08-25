@@ -43,9 +43,10 @@ export function defineEvalTask(task: EvalTask): EvalTask {
   return task;
 }
 
-/** Hash checked-in scenario source for provenance; comparison policy decides whether changes matter. */
-export function taskSourceVersion(source: string): string {
-  return createHash("sha256").update(source).digest("hex");
+/** Hash prompts and expectation; verifier code remains attributable through the runner commit. */
+export function taskVersion(task: EvalTask): string {
+  const input = { expectation: task.expectation, prompts: task.turns.map(turn => turn.prompt) };
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
 /** Revisions attached to one task's result metadata. */
