@@ -51,6 +51,9 @@ pnpm evals
 The preview supplies its own model catalog and Workers AI binding. The runner does not need separate
 model credentials in this mode. The same task prompts and verifiers run locally and on the preview.
 
+The target commit defaults to the current checkout. Set `WORKSHOP_EVAL_TARGET_COMMIT` to the deployed
+40-character Git SHA when the preview came from another revision.
+
 ## Inspect results
 
 The run writes `.wrangler/evals/results.json` in this package. Open the report UI with:
