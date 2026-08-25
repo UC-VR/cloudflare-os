@@ -41,15 +41,14 @@ class PointerEventPolyfill extends MouseEvent {
     this.isPrimary = params.isPrimary ?? true
   }
 }
-// @ts-expect-error -- polyfilling a constructor jsdom doesn't provide
+// @ts-expect-error -- our polyfill class doesn't implement every PointerEvent property, only
+// the ones Base UI's handlers actually read.
 window.PointerEvent = PointerEventPolyfill
-// @ts-expect-error -- jsdom has no pointer-capture implementation
+// jsdom declares these DOM APIs in its types but doesn't implement them at runtime; filling in
+// the missing runtime behavior needs no type suppression.
 HTMLElement.prototype.setPointerCapture ??= () => {}
-// @ts-expect-error
 HTMLElement.prototype.releasePointerCapture ??= () => {}
-// @ts-expect-error
 HTMLElement.prototype.hasPointerCapture ??= () => false
-// @ts-expect-error -- jsdom has no layout engine
 HTMLElement.prototype.scrollIntoView ??= () => {}
 
 const toastAdd = vi.fn()
