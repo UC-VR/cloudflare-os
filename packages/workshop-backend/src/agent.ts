@@ -1352,10 +1352,23 @@ export async function runAgent(
   // their base trees, then the composed proposed change applies on top. (A pre-conversion
   // checkpoint carries neither -- its retired Yjs fields are ignored; the conversion boundary
   // in the tail re-establishes the content.)
-  for (let pin of checkpoint?.pins ?? []) {
-    await applyReplayedPin(pin);
+  // LOCAL PATCH: fail-soft replay of stored changes + bounded replay diff — remove when fixed upstream
+  // Fail-soft, like the tool-call replay catch below: a checkpoint whose pins or composed change
+  // don't fit the content it reconstructs indicates a bug, but throwing here would abort every
+  // future turn identically (replay is redone from scratch each turn), permanently wedging the
+  // chat. Degrade to a partially-reconstructed prefix instead -- the tail's own pins re-seed
+  // whatever the model still needs, and reads of anything missing surface as replayed errors.
+  try {
+    for (let pin of checkpoint?.pins ?? []) {
+      await applyReplayedPin(pin);
+    }
+    if (checkpoint?.proposedChange) applyReplayedChange(checkpoint.proposedChange, false);
+  } catch (err) {
+    logger.error("error in compaction checkpoint replay", {
+      event: "agent.checkpoint.replay.failed",
+      chatId, sequence: checkpoint?.compactedTo, error: err,
+    });
   }
-  if (checkpoint?.proposedChange) applyReplayedChange(checkpoint.proposedChange, false);
 
   for (let msg of chatMessages) {
     let modelMessageStart = modelMessages.length;
@@ -1758,20 +1771,38 @@ export async function runAgent(
         if (msg.conversionBoundary) await resetSessionEpoch(msg.sequence);
 
         if (chatMessageStatus.get(msg.sequence) !== "reverted") {
-          // Pins this batch establishes enter the content before the change applies (a no-op for
-          // gadgets ensureReplayContentForWrite already established early; see there).
-          for (let pin of msg.pins ?? []) {
-            await applyReplayedPin(pin);
-          }
           // A batch with no `change` records only creations/binding additions; there is nothing to
           // apply to the session content (and no diff), but user-authored creations/additions
           // are still surfaced as observations below. A conversion boundary's change is not user
           // activity -- it re-records content from before the boundary, which the model already
           // saw (or wrote) -- so it applies without an observation.
-          let diff = msg.change !== undefined
-              ? applyReplayedChange(
-                  msg.change, msg.author.type === "user" && !msg.conversionBoundary)
-              : undefined;
+          // LOCAL PATCH: fail-soft replay of stored changes + bounded replay diff — remove when fixed upstream
+          let diff: string | undefined;
+          let applyFailed = false;
+          try {
+            // Pins this batch establishes enter the content before the change applies (a no-op for
+            // gadgets ensureReplayContentForWrite already established early; see there).
+            for (let pin of msg.pins ?? []) {
+              await applyReplayedPin(pin);
+            }
+            diff = msg.change !== undefined
+                ? applyReplayedChange(
+                    msg.change, msg.author.type === "user" && !msg.conversionBoundary)
+                : undefined;
+          } catch (err) {
+            // A stored change that doesn't fit the content replay reconstructed (or a base tree
+            // that can't be read) indicates a bug in the replay logic, exactly like a failed tool
+            // call replay -- but unlike one, an escaping throw is unrecoverable: replay runs from
+            // scratch on every turn, so the same message would fail identically forever and the
+            // chat could never be used again. Report it and degrade: skip this batch's content and
+            // tell the model to re-read the files. `applyCodeChange` builds a fresh map and only
+            // assigns on success, so a failed apply leaves the session content untouched.
+            applyFailed = true;
+            logger.error("error in changes message replay", {
+              event: "agent.changes.replay.failed",
+              chatId, sequence: msg.sequence, error: err,
+            });
+          }
           if (msg.author.type === "user" && !msg.conversionBoundary) {
             // Surface everything the user did in this batch as one synthetic observation:
             // gadgets they created and bindings they added from the workspace UI
@@ -1787,7 +1818,14 @@ export async function runAgent(
                   `Added binding "${name}" to ` +
                   (gadgetName !== undefined ? `gadget ${gadgetName}` : `a gadget`) + `.`);
             }
-            if (diff !== undefined) {
+            if (applyFailed) {
+              // The batch's content couldn't be replayed (see the catch above). Say so in the
+              // same shape as the pre-conversion fallback below, so the model knows its view of
+              // the files is stale rather than silently believing nothing changed.
+              observations.push(
+                  "The user edited the gadget code, but the recorded change could not be " +
+                  "replayed. (Read the files to see their current content.)");
+            } else if (diff !== undefined) {
               observations.push(diff);
             } else if ((msg as {update?: Uint8Array}).update !== undefined) {
               // A pre-conversion batch (see AiChatMessageBody.conversionBoundary): its retired
@@ -1989,13 +2027,22 @@ export async function runAgent(
   // applied -- the rows are the authoritative record. (If the rows were since erased -- e.g.
   // the user discarded the draft -- there is simply nothing to apply, and the erased edits stay
   // erased.)
-  for (let pin of hooks.undeclaredChatPins(chatId)) {
-    if (!pinnedGadgets.has(pin.gadgetId)) {
-      await applyReplayedPin(pin);
+  // LOCAL PATCH: fail-soft replay of stored changes + bounded replay diff — remove when fixed upstream
+  // Fail-soft for the same reason as the checkpoint and "changes" replay above: a row that
+  // doesn't fit the reconstructed content must not abort every turn forever.
+  try {
+    for (let pin of hooks.undeclaredChatPins(chatId)) {
+      if (!pinnedGadgets.has(pin.gadgetId)) {
+        await applyReplayedPin(pin);
+      }
     }
-  }
-  for (let row of hooks.listUnmaterializedChatChanges(chatId)) {
-    sessionContent = applyCodeChange(sessionContent, row.change);
+    for (let row of hooks.listUnmaterializedChatChanges(chatId)) {
+      sessionContent = applyCodeChange(sessionContent, row.change);
+    }
+  } catch (err) {
+    logger.error("error in unmaterialized change row replay", {
+      event: "agent.rows.replay.failed", chatId, error: err,
+    });
   }
   pendingReplayEdits = [];
 
@@ -3180,13 +3227,45 @@ export async function runAgent(
   return undefined;
 }
 
+// LOCAL PATCH: fail-soft replay of stored changes + bounded replay diff — remove when fixed upstream
+/**
+ * Combined old+new length, in UTF-16 code units, above which a replayed user edit is summarized
+ * instead of diffed. The unified diff is a Myers line diff (O(N*D) time and space in the worst
+ * case), and files may be up to `MAX_FILE_TEXT_LENGTH` (512K) each, so a single large,
+ * substantially-rewritten file -- e.g. a document a blueprint gadget keeps in one file -- can
+ * exceed the isolate's CPU budget. Replay redoes this work on *every* turn, so a diff that once
+ * runs too long makes the chat permanently unusable; bounding it is what keeps that from
+ * happening. 128K is far above any real hand edit while staying cheap to diff.
+ */
+export const MAX_REPLAY_DIFF_INPUT_LENGTH = 128 * 1024;
+
+/**
+ * Backstop for inputs under `MAX_REPLAY_DIFF_INPUT_LENGTH` that are nonetheless pathological
+ * (wholly dissimilar text diffs at close to the product of the line counts). Passing either knob
+ * makes `createTwoFilesPatch` return `undefined` on bail-out rather than a patch.
+ */
+const MAX_REPLAY_DIFF_EDIT_LENGTH = 20000;
+const MAX_REPLAY_DIFF_MILLIS = 2000;
+
+// Summary emitted in place of a diff that was skipped or bailed out. Deliberately says the size
+// so the model can tell "nothing changed" (no observation at all) from "a lot changed, go read".
+function summarizeOmittedDiff(filename: string, oldContent: string, newContent: string): string {
+  return `--- a/${filename}\n+++ b/${filename}\n` +
+      `@@ diff omitted: ${Math.abs(newContent.length - oldContent.length)} bytes changed ` +
+      `(${oldContent.length} bytes before, ${newContent.length} after). ` +
+      `Read the file to see its current content. @@`;
+}
+
 function formatUnifiedDiff(
     filename: string,
     oldContent: string,
     newContent: string,
     oldExists: boolean,
     newExists: boolean): string | undefined {
-  return createTwoFilesPatch(
+  if (oldContent.length + newContent.length > MAX_REPLAY_DIFF_INPUT_LENGTH) {
+    return summarizeOmittedDiff(filename, oldContent, newContent);
+  }
+  let patch = createTwoFilesPatch(
       oldExists ? `a/${filename}` : "/dev/null",
       newExists ? `b/${filename}` : "/dev/null",
       oldContent,
@@ -3196,7 +3275,13 @@ function formatUnifiedDiff(
       {
         context: 3,
         headerOptions: FILE_HEADERS_ONLY,
-      }).trimEnd();
+        maxEditLength: MAX_REPLAY_DIFF_EDIT_LENGTH,
+        timeout: MAX_REPLAY_DIFF_MILLIS,
+      });
+  if (patch === undefined) {
+    return summarizeOmittedDiff(filename, oldContent, newContent);
+  }
+  return patch.trimEnd();
 }
 
 // =======================================================================================
