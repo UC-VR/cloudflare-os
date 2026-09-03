@@ -218,7 +218,11 @@ describe('AddModelModal (real @cloudflare/kumo Select/Switch)', () => {
 
     expect(addModel).toHaveBeenCalledTimes(1)
     const [profile, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
-    expect(profile.id).toBe('claude-test-model')
+    // LOCAL PATCH: namespace custom-model storage id by endpoint — remove when fixed upstream
+    // profile.id (the storage key) is namespaced by the apiUrl's host; config.model (the wire
+    // name forwarded to the provider) stays the exact string the user typed -- see the
+    // config.model assertion below.
+    expect(profile.id).toBe('claude-test-model@access-proxy.example.com')
     expect(config).toMatchObject({
       provider: 'anthropic',
       model: 'claude-test-model',
@@ -442,5 +446,68 @@ describe('AddModelModal (real @cloudflare/kumo Select/Switch)', () => {
     expect(addModel).toHaveBeenCalledTimes(1)
     const [, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
     expect(config.headers).toBeUndefined()
+  })
+
+  // LOCAL PATCH: namespace custom-model storage id by endpoint — remove when fixed upstream
+  it('leaves a custom model id unsuffixed when no apiUrl is set', async () => {
+    await render({ enabled: false })
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).toHaveBeenCalledTimes(1)
+    const [profile, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
+    expect(profile.id).toBe('claude-test-model')
+    expect(config.model).toBe('claude-test-model')
+    expect(config.apiUrl).toBeUndefined()
+  })
+
+  // LOCAL PATCH: namespace custom-model storage id by endpoint — remove when fixed upstream
+  // A suggested/built-in pick must never get a namespaced profile.id -- isBuiltIn()
+  // (routes/providers.tsx), deleteModel() and resolveModel() (user.ts / ai-gateway.ts) all
+  // look profile.id up against SUGGESTED_MODELS verbatim.
+  it('keeps profile.id exactly the SUGGESTED_MODELS key for a suggested (built-in) pick', async () => {
+    await render({ enabled: false })
+
+    await openSelect()
+    await pickOption('Claude Sonnet 5')
+
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(addModel).toHaveBeenCalledTimes(1)
+    const [profile, config] = addModel.mock.calls[0] as [AiChatAuthorInfo, AiModelConfig]
+    expect(profile.id).toBe('claude-sonnet-5')
+    expect(config.model).toBe('claude-sonnet-5')
+  })
+
+  // LOCAL PATCH: duplicate-storage-id guard on addModel — remove when fixed upstream
+  // addModel() now throws a real Error naming the collision (see user.ts); the modal must
+  // surface that message instead of failing silently or showing only the generic fallback.
+  it('surfaces the collision error message from addModel() as the toast title', async () => {
+    await render({ enabled: false })
+    addModel.mockRejectedValueOnce(
+      new Error('A model with id "claude-test-model" already exists.'))
+
+    await openSelect()
+    await pickOption('Other Anthropic...')
+
+    setInputValue(inputForLabel('Model ID'), 'claude-test-model')
+    setInputValue(inputForLabel('Display Name'), 'Claude Test Model')
+    setInputValue(inputForLabel('API Token'), 'sk-ant-test-token')
+
+    await click(buttonWithText('Add Model'))
+
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'A model with id "claude-test-model" already exists.',
+      variant: 'error',
+    }))
   })
 })

@@ -556,6 +556,22 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       throw new Error(`Provider "${config.provider}" is not available in AI Gateway mode.`);
     }
 
+    // LOCAL PATCH: duplicate-storage-id guard on addModel — remove when fixed upstream
+    // The aiModels collection keys on profile.id (see makeUserStorage() above), and this used
+    // to be a blind put() with no existence check -- a second addModel() call for the same
+    // profile.id silently clobbered the first record's URL/token/headers with no error and no
+    // trace. addModel() has exactly one caller (AddModelModal.tsx's handleSubmit) and there is
+    // no edit/update path anywhere in this codebase, so nothing relies on put() behaving as an
+    // upsert; a collision here is always a mistake, most commonly two custom models that
+    // resolve to the same profile.id (e.g. two "Other <Provider>..." adds of the same model
+    // string pointed at different endpoints, before AddModelModal.tsx started namespacing a
+    // custom id by its apiUrl -- see the LOCAL PATCH there). Fail loudly instead of overwriting.
+    if (this.storage.aiModels.get(profile.id)) {
+      throw new Error(
+        `A model with id "${profile.id}" already exists. Choose a different model ID, or set ` +
+          `a distinct API URL for this endpoint so it gets its own storage id.`);
+    }
+
     profile.type = "agent";
     this.storage.aiModels.put({profile, config});
   }

@@ -19,6 +19,10 @@ function makeUserWithGateway(providers: string) {
     storage: {
       aiModels: {
         put: (entry: { profile: AiChatAuthorInfo; config: AiModelConfig }) => puts.push(entry),
+        // LOCAL PATCH: duplicate-storage-id guard on addModel — remove when fixed upstream
+        // addModel() now checks storage.aiModels.get(profile.id) before put()-ing; mirror the
+        // real collection's get()-by-primary-key lookup against what's already been put().
+        get: (id: string) => puts.find(p => p.profile.id === id),
       },
     },
   });
@@ -55,5 +59,34 @@ describe("UserDurableObject.addModel", () => {
 
     expect(puts).toHaveLength(1);
     expect(puts[0]!.config.routing).toBe("direct");
+  });
+
+  // LOCAL PATCH: duplicate-storage-id guard on addModel — remove when fixed upstream
+  // addModel() previously did a blind put() with no existence check, so a second call for the
+  // same profile.id silently clobbered the first record instead of failing. This is the exact
+  // collision AddModelModal.tsx's LOCAL PATCH (namespacing a custom model's id by its apiUrl)
+  // exists to make rare, but addModel() itself is the actual backstop.
+  it("rejects addModel() when a record already exists for this profile.id", async () => {
+    const { user, puts } = makeUserWithGateway("cloudflare");
+
+    await user.addModel(PROFILE, {
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      apiToken: "first-proxy-token",
+      apiUrl: "https://proxy-one.example.com/anthropic",
+      routing: "direct",
+    });
+
+    await expect(user.addModel(PROFILE, {
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      apiToken: "second-proxy-token",
+      apiUrl: "https://proxy-two.example.com/anthropic",
+      routing: "direct",
+    })).rejects.toThrow(`A model with id "${PROFILE.id}" already exists.`);
+
+    // The first record must be untouched -- no clobber.
+    expect(puts).toHaveLength(1);
+    expect(puts[0]!.config.apiUrl).toBe("https://proxy-one.example.com/anthropic");
   });
 });

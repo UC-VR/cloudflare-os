@@ -284,9 +284,52 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       const finalModelId = isSuggested ? selection!.modelId : modelId.trim()
       const finalDisplayName = isSuggested ? selection!.displayName : displayName.trim()
 
+      // LOCAL PATCH: namespace custom-model storage id by endpoint — remove when fixed upstream
+      // profile.id is the storage primaryKey (UserDurableObject's aiModels collection keys on
+      // record.profile.id, see user.ts's makeUserStorage()) but config.model is the wire model
+      // name forwarded verbatim to the provider by getModelDirect() -- it MUST stay exactly what
+      // was typed/selected. Two different endpoints (e.g. two Access-protected proxies) can
+      // legitimately expose the same provider model string; without a per-endpoint storage id
+      // they collide on the same key, and addModel() previously did a blind put() that silently
+      // clobbered whichever record was added first (it now throws on that collision instead --
+      // see the LOCAL PATCH in user.ts). This also closes a latent shadowing hazard: this
+      // deployment's SUGGESTED_MODELS.anthropic already contains the literal key "claude-opus-5"
+      // (workshop-shared/src/api.ts), inert today only because the platform AI Gateway here is
+      // configured with providers: ["cloudflare"] (deployment.jsonc -- Anthropic BYOK on that
+      // gateway is flagged there as a later owner task). If Anthropic BYOK is ever enabled on
+      // that gateway, a custom record keyed exactly "claude-opus-5" would be silently shadowed
+      // by a platform-credentialed gateway call (AiGatewayConfig.resolveModel() in
+      // workshop-backend/src/ai-gateway.ts matches profile.id against SUGGESTED_MODELS
+      // verbatim), bypassing this record's own apiUrl/headers/token entirely. A namespaced
+      // custom id can never collide with a bare SUGGESTED_MODELS key, so it's immune.
+      //
+      // Suggested/built-in picks are untouched by this: isBuiltIn() (routes/providers.tsx),
+      // deleteModel() and resolveModel() (user.ts / ai-gateway.ts) all look profile.id up
+      // against SUGGESTED_MODELS verbatim, so a suggested pick's id must stay EXACTLY the
+      // SUGGESTED_MODELS key -- only the isSuggested === false (custom) branch below ever
+      // diverges profile.id from config.model.
+      let finalProfileId = finalModelId
+      if (!isSuggested && useDirectCredentials) {
+        const trimmedApiUrl = apiUrl.trim()
+        if (trimmedApiUrl) {
+          try {
+            // "@" mirrors the "model@endpoint" shorthand this id already resembles (Workers AI
+            // ids like "@cf/meta/llama-3-8b-instruct" also use "@", but nothing in this codebase
+            // splits/parses profile.id on it -- every consumer (deleteModel, resolveModel,
+            // isBuiltIn, the aiModels collection's primaryKey) compares it as an opaque string).
+            finalProfileId = `${finalModelId}@${new URL(trimmedApiUrl).host}`
+          } catch {
+            // Not a parseable absolute URL -- validate() only requires apiUrl to be non-empty
+            // for Ollama and never enforces URL shape generally. Fall back to the bare model id
+            // rather than block the save; addModel()'s duplicate guard is the backstop if that
+            // happens to collide with an existing record.
+          }
+        }
+      }
+
       const profile: AiChatAuthorInfo = {
         type: 'agent',
-        id: finalModelId,
+        id: finalProfileId,
         name: finalDisplayName,
       }
 
@@ -318,7 +361,16 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       onSuccess()
     } catch (error: any) {
       console.error('Failed to add model:', error)
-      toasts.add({ title: 'Failed to add model', variant: 'error' })
+      // LOCAL PATCH: duplicate-storage-id guard on addModel — remove when fixed upstream
+      // addModel() now throws a real Error naming the collision on an id clash (see user.ts)
+      // instead of silently overwriting the existing record. Surface that message -- matching
+      // the error instanceof Error && error.message ? ... pattern already used elsewhere in
+      // this package (GatekeeperModal.tsx, ChatInterface.tsx) -- rather than the generic
+      // fallback, or the collision would go just as unexplained as a silent overwrite did.
+      toasts.add({
+        title: error instanceof Error && error.message ? error.message : 'Failed to add model',
+        variant: 'error',
+      })
     } finally {
       setLoading(false)
     }
