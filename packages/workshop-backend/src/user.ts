@@ -567,9 +567,14 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     // string pointed at different endpoints, before AddModelModal.tsx started namespacing a
     // custom id by its apiUrl -- see the LOCAL PATCH there). Fail loudly instead of overwriting.
     if (this.storage.aiModels.get(profile.id)) {
+      // Deliberately generic: this guard fires on ANY collision, not just the custom-model/
+      // apiUrl case AddModelModal.tsx's namespacing patch targets -- e.g. re-adding the same
+      // suggested model twice, or a custom model added in AI-Gateway mode with the direct-
+      // routing toggle off (no apiUrl field shown at all). "Set a distinct API URL" would be
+      // wrong advice in both of those cases, so this message doesn't prescribe one fix.
       throw new Error(
-        `A model with id "${profile.id}" already exists. Choose a different model ID, or set ` +
-          `a distinct API URL for this endpoint so it gets its own storage id.`);
+        `A model with id "${profile.id}" already exists. Delete the existing one first, or ` +
+          `(for a custom model) give it a distinct API URL so it gets its own storage id.`);
     }
 
     profile.type = "agent";
