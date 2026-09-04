@@ -571,10 +571,12 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       // apiUrl case AddModelModal.tsx's namespacing patch targets -- e.g. re-adding the same
       // suggested model twice, or a custom model added in AI-Gateway mode with the direct-
       // routing toggle off (no apiUrl field shown at all). "Set a distinct API URL" would be
-      // wrong advice in both of those cases, so this message doesn't prescribe one fix.
+      // wrong advice in both of those cases, so this message scopes that suggestion to the
+      // only path where the field exists at all: a custom model that sets its own API URL.
       throw new Error(
         `A model with id "${profile.id}" already exists. Delete the existing one first, or ` +
-          `(for a custom model) give it a distinct API URL so it gets its own storage id.`);
+          `(for a custom model that sets its own API URL) give it a distinct one so it ` +
+          `gets its own storage id.`);
     }
 
     profile.type = "agent";
