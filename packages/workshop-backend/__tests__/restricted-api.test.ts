@@ -305,6 +305,19 @@ describe("parseRestrictedUsers / assertRestrictedUsersConfigured", () => {
     expect(() => parseRestrictedUsers(raw)).toThrow(RestrictedUsersConfigError);
   });
 
+  // (c) Two keys that collide once lowercased. Keeping either one silently would make the
+  // effective restriction depend on JSON property order.
+  it("rejects two keys that differ only in case", () => {
+    const raw = `{"a@b.c":{"workspace":"${PINNED}","until":"${FAR_FUTURE}"},` +
+        `"A@B.C":{"workspace":"${OTHER}","until":"${FAR_FUTURE}"}}`;
+    expect(() => parseRestrictedUsers(raw)).toThrow(/differ only in case/);
+  });
+
+  it("lowercases keys so the lookup can case-fold both sides", () => {
+    expect(parseRestrictedUsers(`{"Viewer@Example.com":{"workspace":"${PINNED}","until":"${FAR_FUTURE}"}}`))
+      .toEqual({ "viewer@example.com": { workspace: PINNED, until: FAR_FUTURE } });
+  });
+
   it("throws when Access auth is on and the variable is absent", () => {
     expect(() => assertRestrictedUsersConfigured({ CF_ACCESS_AUD: "aud" }))
       .toThrow(/RESTRICTED_USERS is not set/);
@@ -365,6 +378,24 @@ describe("lookupRestriction", () => {
   it("returns null when nobody is restricted", () => {
     expect(lookupRestriction({ RESTRICTED_USERS: "{}" }, "a@b.c")).toBeNull();
   });
+
+  // (a) The case that motivated this: nothing between the identity provider and here normalizes
+  // the Access email claim (access.ts verifies the JWT without touching case; server.ts passes it
+  // straight to users.idFromName()), so a provider echoing "Reviewer@Example.com" would defeat a
+  // verbatim comparison -- and a MISS hands the user the FULL API, not less access.
+  it("matches a mixed-case Access claim against a lowercase config key", () => {
+    expect(lookupRestriction(env, "A@B.C")).toEqual({ workspace: PINNED, until: FAR_FUTURE });
+    expect(lookupRestriction(env, "A@b.C")).toEqual({ workspace: PINNED, until: FAR_FUTURE });
+  });
+
+  // (b) The other side of the fold. G1 in the wrapper's deploy.ts rejects a capitalised config
+  // key, but this must still hold for anyone who bypasses that guard.
+  it("matches a lowercase claim against a capitalised config key", () => {
+    const shouty = {
+      RESTRICTED_USERS: `{"A@B.C":{"workspace":"${PINNED}","until":"${FAR_FUTURE}"}}`,
+    };
+    expect(lookupRestriction(shouty, "a@b.c")).toEqual({ workspace: PINNED, until: FAR_FUTURE });
+  });
 });
 
 // T22a -- the factory both authentication paths in server.ts go through. CF_ACCESS_AUD is
@@ -377,6 +408,11 @@ describe("makeAuthenticatedApi", () => {
 
   it("wraps a restricted user even with CF_ACCESS_AUD unset", () => {
     const api = makeAuthenticatedApi(env, { name: "a@b.c" }, () => full);
+    expect(api).toBeInstanceOf(RestrictedAuthenticatedApi);
+  });
+
+  it("wraps a restricted user whose Access claim arrives in mixed case", () => {
+    const api = makeAuthenticatedApi(env, { name: "A@B.C" }, () => full);
     expect(api).toBeInstanceOf(RestrictedAuthenticatedApi);
   });
 

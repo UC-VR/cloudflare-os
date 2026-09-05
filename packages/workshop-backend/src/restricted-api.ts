@@ -31,9 +31,19 @@
 //   outlives its own expiry until the client reconnects or the workspace DO aborts. Revocation
 //   that must take effect immediately still goes through the Overseer's own revocation path
 //   (scheduleRevocationRestart in overseer.ts), exactly as it does for share links.
-// - The map is keyed on DurableObjectId.name, i.e. the Cloudflare Access `email` claim verbatim —
-//   the same key ADMINS matches. Casing is not normalized here, deliberately, so that the two
-//   lists behave identically; the deploy-side guard requires lowercase keys instead.
+// - The map is keyed on the Cloudflare Access `email` claim (DurableObjectId.name), and the lookup
+//   is deliberately CASE-INSENSITIVE: keys are lowercased at parse time and the claim is
+//   lowercased before matching. Do NOT "fix" this to match ADMINS' verbatim comparison. The two
+//   lists fail in opposite directions. A casing mismatch against ADMINS denies admin rights —
+//   less privilege, safe. A casing mismatch against RESTRICTED_USERS misses the entry, and the
+//   miss is indistinguishable from "unrestricted", so it hands the user the FULL API — more
+//   privilege, unsafe. Nothing normalizes the claim upstream of here (access.ts verifies the JWT
+//   without touching case; server.ts passes `email` straight to users.idFromName()), so an
+//   identity provider that echoes back "Reviewer@Example.com" is enough to defeat a verbatim
+//   comparison. Lowercasing can only ADD matches, so it can only ever fail toward restriction.
+//   The deploy-side guard requires lowercase config keys as well; this is the half that holds
+//   when someone bypasses it. Note the DO identity itself still uses the claim verbatim — this
+//   changes only which entry a user matches, never which Durable Object they are.
 // - `getAvatar()` is delegated because it already accepts any user id by design and the "use" tier
 //   (UseOverseerInterface.subscribeToPresence) already reveals co-viewers' names and profile ids.
 //   It is not a new disclosure.
@@ -88,6 +98,10 @@ function isEntry(value: unknown): value is RestrictedEntry {
  * Parses the raw `RESTRICTED_USERS` var. Returns null for ABSENT, and throws for anything present
  * but not a well-formed map — the two failure modes must stay distinguishable, because only one of
  * them ("{}", a valid empty map) is a legitimate deployment state.
+ *
+ * Keys come back LOWERCASED, so `lookupRestriction` can match a lowercased Access claim against
+ * them. Two keys that collide once lowercased are a configuration error and throw: silently
+ * keeping one of them would make the effective restriction depend on JSON property order.
  */
 export function parseRestrictedUsers(raw: string | undefined): Record<string, RestrictedEntry> | null {
   if (raw === undefined) return null;
@@ -103,13 +117,23 @@ export function parseRestrictedUsers(raw: string | undefined): Record<string, Re
         "RESTRICTED_USERS must be a JSON object mapping user name to {workspace, until}.");
   }
   const result: Record<string, RestrictedEntry> = {};
+  const seen = new Map<string, string>();
   for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
     if (!isEntry(value)) {
       throw new RestrictedUsersConfigError(
           `RESTRICTED_USERS entry for ${JSON.stringify(name)} must be ` +
           `{workspace: string, until: string} with both non-empty.`);
     }
-    result[name] = { workspace: value.workspace, until: value.until };
+    const key = name.toLowerCase();
+    const previous = seen.get(key);
+    if (previous !== undefined) {
+      throw new RestrictedUsersConfigError(
+          `RESTRICTED_USERS has two keys that differ only in case, ${JSON.stringify(previous)} ` +
+          `and ${JSON.stringify(name)}. The lookup is case-insensitive, so one of them would ` +
+          "silently win on JSON property order. Keep exactly one, lowercase.");
+    }
+    seen.set(key, name);
+    result[key] = { workspace: value.workspace, until: value.until };
   }
   return result;
 }
@@ -145,13 +169,17 @@ export function isRestrictionActive(entry: RestrictedEntry, now: Date): boolean 
  * above is conditioned on Access mode. Restriction must apply on every authentication path,
  * including the session-token path, which is otherwise reachable by any future config change that
  * revives password or gatekeeper sign-in.
+ *
+ * The comparison is CASE-INSENSITIVE on both sides: a missed match here does not fail safe, it
+ * hands the caller the full API. See the case-folding note in this file's header comment before
+ * changing it.
  */
 export function lookupRestriction(
     env: RestrictedUsersEnv, userName: string | null | undefined): RestrictedEntry | null {
   if (!userName) return null;
   const map = parseRestrictedUsers(env.RESTRICTED_USERS);
   if (!map) return null;
-  const entry = map[userName];
+  const entry = map[userName.toLowerCase()];
   return entry ?? null;
 }
 
@@ -166,8 +194,10 @@ export function makeAuthenticatedApi(
     env: RestrictedUsersEnv,
     userId: { readonly name?: string },
     makeFullApi: () => AuthenticatedApi): AuthenticatedApi {
-  // Keyed on userId.name verbatim, exactly as AuthenticatedApiImpl.#isAdmin() keys ADMINS -- both
-  // paths in server.ts derive that name from the same Access email, and neither normalizes it.
+  // userId.name is the Cloudflare Access email claim, unnormalized by every path that reaches
+  // here. lookupRestriction() case-folds both sides precisely because a miss here fails toward
+  // the FULL API, unlike an ADMINS miss -- see this file's header comment. The Durable Object
+  // identity is unaffected: server.ts still derives it from the verbatim claim.
   const entry = lookupRestriction(env, userId.name);
   if (!entry) return makeFullApi();
   if (!isRestrictionActive(entry, new Date())) {
