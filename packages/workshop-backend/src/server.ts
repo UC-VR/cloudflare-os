@@ -2,6 +2,8 @@ import { RpcStub, RpcTarget, newHttpBatchRpcResponse, newWebSocketRpcSession, Rp
 import { validateRpc } from "capnweb-validate";
 import type { JWTPayload } from "jose";
 import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+import type { RestrictionInfo } from '@gadgets/workshop-shared/api';
 import type { UiFeatureFlags } from "@gadgets/workshop-shared/feature-flags";
 import { getServerConfig } from "./deployment-config.js";
 import { isPasswordAuthEnabled, getAuthGatekeeperAllowlist } from "./auth/config.js";
@@ -29,12 +31,19 @@ import { resolveUiFeatureFlags } from "./feature-flags";
 import { serveSiteLogo, SITE_LOGO_PATH } from "./site-logo.js";
 import { createWorkshopLogger } from "./observability";
 import { retryOnDoReset, wrapDoStubForTelemetry } from "./do-retry";
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+import { assertRestrictedUsersConfigured, makeAuthenticatedApi } from "./restricted-api";
 
 const logger = createWorkshopLogger("workshop.server");
 
 // Set once we've asked the AdminSettings DO to install the bundled format blueprints (see the
 // fetch handler), so later requests skip the call. The DO holds the real answer.
 let formatBlueprintInstallStarted = false;
+
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+// Same module-scope-memo idiom as formatBlueprintInstallStarted above, for the RESTRICTED_USERS
+// fail-closed check in the fetch handler. Set only after the check passes.
+let restrictedUsersChecked = false;
 
 function publicBlueprintInfo(id: string, metadata: BlueprintPublicInfo['metadata']): BlueprintPublicInfo {
   return {
@@ -589,6 +598,14 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return this.#isAdmin();
   }
 
+  // LOCAL PATCH: restricted-view — remove when fixed upstream
+  // The unrestricted API always answers null. RestrictedAuthenticatedApi overrides this with the
+  // caller's actual entry; the client uses it to route to the pinned workspace before any listing
+  // call, because the pinned workspace is not in listGadgets() until the first successful open.
+  async getRestriction(): Promise<RestrictionInfo | null> {
+    return null;
+  }
+
   async getAdminApi(): Promise<RpcStub<AdminApi> | null> {
     if (!this.#isAdmin()) return null;
     // #isAdmin() guarantees a non-empty user id name. Forwarded to gatekeepers when listing the
@@ -690,7 +707,8 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
       user_id: userId.toString(),
       source: "session_token",
     });
-    return new AuthenticatedApiImpl(this.ctx, this.env, userId, this.abortSession);
+    // LOCAL PATCH: restricted-view — remove when fixed upstream
+    return this.#makeAuthenticatedApi(userId);
   }
 
   async authenticateFromCfAccess(): Promise<AuthenticatedApi> {
@@ -715,7 +733,20 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
       user_id: userId.toString(),
       source: "cf_access",
     });
-    return new AuthenticatedApiImpl(this.ctx, this.env, userId, this.abortSession);
+    // LOCAL PATCH: restricted-view — remove when fixed upstream
+    return this.#makeAuthenticatedApi(userId);
+  }
+
+  // LOCAL PATCH: restricted-view — remove when fixed upstream
+  // The ONLY place an AuthenticatedApiImpl is constructed. Both authentication paths above route
+  // through here, deliberately: authenticate() (the session-token path) is dead on an Access-only
+  // deployment only by coincidence -- login(), createAccount() and startGatekeeperLogin() all
+  // refuse under this config, and nothing enforces that invariant -- so hooking only the Access
+  // path would hand a restricted user the full, unrestricted API the moment any future config or
+  // upstream change revived a session-token minter.
+  #makeAuthenticatedApi(userId: DurableObjectId): AuthenticatedApi {
+    return makeAuthenticatedApi(this.env, userId,
+        () => new AuthenticatedApiImpl(this.ctx, this.env, userId, this.abortSession));
   }
 
   async login(username: string, passwordHash: Uint8Array): Promise<string | null> {
@@ -814,6 +845,16 @@ export default {
     }
 
     if (url.pathname === "/api") {
+      // LOCAL PATCH: restricted-view — remove when fixed upstream
+      // Fail closed on a missing or malformed RESTRICTED_USERS before any capability is minted.
+      // Memoizes SUCCESS only, so a misconfigured deployment keeps throwing (500 on every /api
+      // request) rather than passing after one lucky isolate. See restricted-api.ts for why an
+      // absent var must not mean "nobody is restricted"; the deploy script always emits "{}".
+      if (!restrictedUsersChecked) {
+        assertRestrictedUsersConfigured(env);
+        restrictedUsersChecked = true;
+      }
+
       // Make sure the bundled format blueprints are installed. The AdminSettings DO doesn't wake
       // merely because someone deployed, so the install needs a trigger; hanging it off API
       // traffic means a fresh deployment is provisioned by its first visitor. Fire-and-forget,

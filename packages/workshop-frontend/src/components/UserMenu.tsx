@@ -3,10 +3,17 @@ import { DropdownMenu } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../AuthContext'
 import { useAvatar } from '../useAvatar'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './menuStyles'
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+import { useRestriction } from '../RestrictionContext'
 
 export default function UserMenu() {
   const { authenticatedApi, logout, currentUser, isAdmin } = useAuthenticatedApi()
   const navigate = useNavigate()
+  // LOCAL PATCH: restricted-view — remove when fixed upstream
+  // Profile and Providers are denied for a restricted user (setOwnDisplayName, setAvatar,
+  // listModels, addModel and the rest all throw), so offering them would only produce error
+  // toasts on pages they are redirected off anyway. Sign out stays. Ergonomics only.
+  const restricted = useRestriction() !== null
 
   const avatarUrl = useAvatar(authenticatedApi, currentUser?.id)
 
@@ -32,27 +39,32 @@ export default function UserMenu() {
         }
       />
       <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
-        <DropdownMenu.Item
-          onClick={() => navigate({ to: '/profile' })}
-          className={MENU_ITEM}
-        >
-          Profile
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
-          onClick={() => navigate({ to: '/providers' })}
-          className={MENU_ITEM}
-        >
-          Providers
-        </DropdownMenu.Item>
-        {isAdmin && (
-          <DropdownMenu.Item
-            onClick={() => navigate({ to: '/admin' })}
-            className={MENU_ITEM}
-          >
-            Admin
-          </DropdownMenu.Item>
+        {/* LOCAL PATCH: restricted-view — remove when fixed upstream */}
+        {!restricted && (
+          <>
+            <DropdownMenu.Item
+              onClick={() => navigate({ to: '/profile' })}
+              className={MENU_ITEM}
+            >
+              Profile
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              onClick={() => navigate({ to: '/providers' })}
+              className={MENU_ITEM}
+            >
+              Providers
+            </DropdownMenu.Item>
+            {isAdmin && (
+              <DropdownMenu.Item
+                onClick={() => navigate({ to: '/admin' })}
+                className={MENU_ITEM}
+              >
+                Admin
+              </DropdownMenu.Item>
+            )}
+            <DropdownMenu.Separator />
+          </>
         )}
-        <DropdownMenu.Separator />
         <DropdownMenu.Item
           variant="danger"
           onClick={logout}

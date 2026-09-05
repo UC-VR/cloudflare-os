@@ -15,6 +15,8 @@ import UserMenu from './components/UserMenu'
 import { GadgetPresence } from './components/GadgetPresence'
 import TopBarNotice from './TopBarNotice'
 import SiteLogo from './components/SiteLogo'
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+import { useRestriction } from './RestrictionContext'
 import GadgetExportMenu from './GadgetExportMenu'
 
 // The minimal, "use"-only experience: a shared top bar plus the gadget's deployed UI, and nothing
@@ -54,6 +56,10 @@ export default function GadgetUseView({
   authenticatedApi,
   currentUserId,
 }: Props) {
+  // LOCAL PATCH: restricted-view — remove when fixed upstream
+  // A restricted user has nowhere else to go, so the Home link would only ever bounce them
+  // straight back here through the redirect in routes/__root.tsx. Ergonomics only.
+  const restricted = useRestriction() !== null
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-kumo-base">
       {/* ═══ TOP BAR ════════════════════════════════════════════════════════════ */}
@@ -64,11 +70,20 @@ export default function GadgetUseView({
         <TopBarNotice />
         {/* Left: logo / title */}
         <div className="flex items-center gap-2 min-w-0">
-          <Link to="/" aria-label="Home" className="flex-shrink-0 hover:opacity-80 transition-opacity">
-            <SiteLogo size={22}>
-              <Hexagon size={22} className="text-kumo-brand" weight="bold" />
-            </SiteLogo>
-          </Link>
+          {/* LOCAL PATCH: restricted-view — remove when fixed upstream */}
+          {restricted ? (
+            <span className="flex-shrink-0">
+              <SiteLogo size={22}>
+                <Hexagon size={22} className="text-kumo-brand" weight="bold" />
+              </SiteLogo>
+            </span>
+          ) : (
+            <Link to="/" aria-label="Home" className="flex-shrink-0 hover:opacity-80 transition-opacity">
+              <SiteLogo size={22}>
+                <Hexagon size={22} className="text-kumo-brand" weight="bold" />
+              </SiteLogo>
+            </Link>
+          )}
 
           <span className="text-kumo-inactive flex-shrink-0">/</span>
 

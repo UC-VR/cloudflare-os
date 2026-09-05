@@ -711,9 +711,35 @@ export interface AuthenticatedApi extends RpcTarget {
    */
   getAdminApi(): Promise<RpcStub<AdminApi> | null>;
 
+  // LOCAL PATCH: restricted-view — remove when fixed upstream
+  /**
+   * Describes the caller's pinned-workspace restriction, or null when the caller is unrestricted.
+   *
+   * The frontend needs this BEFORE it can route: a restricted user's pinned workspace does not
+   * appear in `listGadgets()` until they have opened it once (the owner's share grant is only
+   * recorded on the first successful `openGadget()`), so the list is not a usable source for the
+   * initial redirect. This is a plain description, never a capability — the backend gate is
+   * `RestrictedAuthenticatedApi` itself, not anything the client does with this value.
+   */
+  getRestriction(): Promise<RestrictionInfo | null>;
+
   // TODO:
   // - Edit permissions on a connected account.
 }
+
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+/**
+ * A single entry of the deployment's `RESTRICTED_USERS` map, as handed to the client.
+ *
+ * `workspace` is an Overseer Durable Object id string (the same value `openGadget()` takes).
+ * `until` is an ISO-8601 date/date-time after which the grant is dead; it is evaluated when a
+ * session is minted, so an already-open session outlives its own expiry until the client
+ * reconnects or the Overseer DO aborts.
+ */
+export type RestrictionInfo = {
+  workspace: string;
+  until: string;
+};
 
 /** Describes a gatekeeper's management app, for the Workshop nav + page. */
 export type GatekeeperAppInfo = {

@@ -1,9 +1,12 @@
 import { logRpcFailure } from '../rpcErrors'
 import { useState, useEffect } from 'react'
-import { createRootRoute, Outlet, useRouterState } from '@tanstack/react-router'
+import { createRootRoute, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { TooltipProvider, Toasty } from '@cloudflare/kumo'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+import type { RestrictionInfo } from '@gadgets/workshop-shared/api'
+import { RestrictionProvider } from '../RestrictionContext'
 import { useRpcStub, useConnectionLost } from '../RpcContext'
 import { useAuth, CF_ACCESS_MODE } from '../useAuth'
 import { AuthProvider } from '../AuthContext'
@@ -105,20 +108,97 @@ function RootComponent() {
   // authenticatedApi is guaranteed non-null here: isLoading, error, and
   // !isAuthenticated branches all return early above.
   if (!authenticatedApi) return null
+  // LOCAL PATCH: restricted-view — remove when fixed upstream
+  // The restriction is resolved BEFORE the shell mounts, so a restricted user never sees the app
+  // chrome flash past on their way to the pinned workspace. Ergonomics only -- the backend denies
+  // everything outside that workspace whatever the client renders.
   return (
-    <AuthProvider authenticatedApi={authenticatedApi} onLogout={logout}>
-      <FeatureFlagsProvider>
-        <TooltipProvider>
-          <Toasty>
-            <AuthenticatedShell
-              authenticatedApi={authenticatedApi}
-              isWorkspaceEditor={isWorkspaceEditor}
-            />
-          </Toasty>
-        </TooltipProvider>
-      </FeatureFlagsProvider>
-    </AuthProvider>
+    <RestrictedGate authenticatedApi={authenticatedApi} pathname={pathname}>
+      <AuthProvider authenticatedApi={authenticatedApi} onLogout={logout}>
+        <FeatureFlagsProvider>
+          <TooltipProvider>
+            <Toasty>
+              <AuthenticatedShell
+                authenticatedApi={authenticatedApi}
+                isWorkspaceEditor={isWorkspaceEditor}
+              />
+            </Toasty>
+          </TooltipProvider>
+        </FeatureFlagsProvider>
+      </AuthProvider>
+    </RestrictedGate>
   )
+}
+
+// LOCAL PATCH: restricted-view — remove when fixed upstream
+/**
+ * Resolves the caller's pinned-workspace restriction and, when there is one, keeps them on that
+ * workspace's route.
+ *
+ * getRestriction() rather than listGadgets(): the pinned workspace does not appear in a restricted
+ * user's own listing until they have opened it once, so the list is useless for the FIRST
+ * navigation -- which is exactly the one that matters.
+ *
+ * window.location.hash is preserved verbatim across the redirect because the `#share=<key>` grant
+ * link is how a restricted user gets access in the first place (see useWorkspaceOpen). Dropping it
+ * would break the very first login of every stakeholder.
+ *
+ * A failed check falls through as unrestricted on purpose: the backend is the gate, and spinning
+ * forever on a transient RPC error would deny a legitimate user for no security benefit.
+ */
+function RestrictedGate({
+  authenticatedApi,
+  pathname,
+  children,
+}: {
+  authenticatedApi: RpcStub<AuthenticatedApi>
+  pathname: string
+  children: React.ReactNode
+}) {
+  const navigate = useNavigate()
+  const [checked, setChecked] = useState(false)
+  const [restriction, setRestriction] = useState<RestrictionInfo | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    authenticatedApi.getRestriction().then((result) => {
+      if (!cancelled) {
+        setRestriction(result ?? null)
+        setChecked(true)
+      }
+    }).catch((err) => {
+      logRpcFailure('Failed to check workspace restriction:', err)
+      if (!cancelled) {
+        setRestriction(null)
+        setChecked(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [authenticatedApi])
+
+  const workspace = restriction?.workspace
+  const misplaced = workspace !== undefined && pathname !== `/workspace/${workspace}`
+
+  useEffect(() => {
+    if (!misplaced || workspace === undefined) return
+    navigate({
+      to: '/workspace/$id',
+      params: { id: workspace },
+      search: {},
+      hash: window.location.hash.replace(/^#/, '') || undefined,
+      replace: true,
+    })
+  }, [misplaced, workspace, navigate])
+
+  if (!checked || misplaced) {
+    return (
+      <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base">
+        <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  return <RestrictionProvider value={restriction}>{children}</RestrictionProvider>
 }
 
 /**

@@ -10,6 +10,17 @@ declare global {
       // (which is what a secret binding, can carry).
       ADMINS?: string[] | string;
 
+      // LOCAL PATCH: restricted-view — remove when fixed upstream
+      // JSON object mapping a user name (the same key ADMINS matches: DurableObjectId.name, which
+      // is the Access email verbatim) to { workspace, until }. A user listed here authenticates to
+      // a RestrictedAuthenticatedApi pinned to that one workspace instead of the full API.
+      //
+      // Unlike ADMINS this is a plain string, never a JSON binding: the deploy script always emits
+      // it (as "{}" when nobody is restricted) so that ABSENT and EMPTY stay distinguishable. The
+      // runtime treats ABSENT (or unparseable) as a misconfiguration and throws -- a missing var
+      // must never silently mean "nobody is restricted", which is the inverse of how ADMINS fails.
+      RESTRICTED_USERS?: string;
+
       // Workers AI binding (injected by generate-wrangler-prod / run-dev-server; not in base wrangler.jsonc).
       WORKERS_AI: Ai;
 
